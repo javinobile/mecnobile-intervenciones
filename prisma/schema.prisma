@@ -1,0 +1,165 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MECHANIC
+  VIEWER
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String?
+  email         String         @unique
+  emailVerified DateTime?
+  image         String?
+  role          Role           @default(MECHANIC)
+  accounts      Account[]
+  sessions      Session[]
+  interventions Intervention[]
+  passwordHash  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+//Esquema referente al taller
+model Client {
+  id               String         @id @default(uuid())
+  firstName        String
+  lastName         String
+  phone            String?
+  email            String?        @unique // No siempre tendrán email, pero si lo tienen, es único.
+  address          String?
+  // Relación con la propiedad del coche (el 'dueño actual' y los pasados)
+  ownedCarsHistory CarOwnership[]
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@unique([firstName, lastName, phone]) // Podría ser una buena clave de unicidad compuesta
+}
+
+model Car {
+  id           String  @id @default(uuid())
+  licensePlate String  @unique
+  vin          String  @unique
+  engineNumber String?
+  color        String?
+  make         String?
+  model        String?
+  year       Int?
+  initialKm    Int
+  unlockCodes  Json?
+
+  // Relaciones: SOLO MANTENEMOS EL HISTORIAL DE PROPIEDAD
+  ownershipHistory CarOwnership[]
+  interventions    Intervention[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CarOwnership {
+  id        String    @id @default(uuid())
+  carId     String
+  clientId  String
+  startDate DateTime // Fecha en que el cliente se hizo dueño
+  endDate   DateTime? // Fecha en que dejó de ser dueño (null si es el dueño actual)
+
+  // Relaciones
+  car    Car    @relation(fields: [carId], references: [id], onDelete: Cascade)
+  client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
+
+  // Agregamos un índice para búsquedas rápidas
+  @@index([carId])
+  @@index([clientId])
+}
+
+// Definición para el estado del pago o la intervención si fuera necesario, aunque por ahora solo registramos.
+enum InterventionStatus {
+  COMPLETED
+  PENDING_PAYMENT
+  CANCELLED
+}
+
+model Intervention {
+  id String @id @default(uuid())
+
+  otNumber    Int
+  // Datos del Trabajo
+  description String
+  notes       String? // Para detalles adicionales o internos
+  cost        Decimal @default(0.00) @db.Decimal(10, 2) // Costo total del trabajo
+
+  // Estado y Fechas
+  status             InterventionStatus @default(COMPLETED)
+  dateOfIntervention DateTime           @default(now())
+
+  // Conexión con el Coche
+  carId String
+  car   Car    @relation(fields: [carId], references: [id], onDelete: Restrict)
+
+  // Conexión con el Mecánico/Usuario que realizó la Intervención
+  performedById String
+  performedBy   User   @relation(fields: [performedById], references: [id], onDelete: Restrict) // Asumiendo que el User es quien registra el trabajo.
+
+  // Datos Adicionales al momento de la intervención
+  mileageKm Int // Kilometraje del coche al momento de la intervención
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([carId])
+  @@index([performedById])
+}
