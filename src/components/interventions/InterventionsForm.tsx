@@ -14,9 +14,9 @@ interface InterventionEditFormProps {
 }
 
 const statusOptions = [
-    { value: 'PENDING_PAYMENT', label: 'Pendiente Pago' },
-    { value: 'COMPLETED', label: 'Completada' },
-    { value: 'CANCELLED', label: 'Cancelada' },
+    { value: 'ABIERTA', label: 'Abierta' },
+    { value: 'CERRADA', label: 'Completada' },
+    { value: 'CANCELADA', label: 'Cancelada' },
     // Si agregas PENDING o IN_PROGRESS, añádelos aquí:
     // { value: 'PENDING', label: 'Pendiente de Inicio' },
 ];

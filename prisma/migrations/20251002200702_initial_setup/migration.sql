@@ -2,7 +2,7 @@
 CREATE TYPE "Role" AS ENUM ('ADMIN', 'MECHANIC', 'VIEWER');
 
 -- CreateEnum
-CREATE TYPE "InterventionStatus" AS ENUM ('COMPLETED', 'PENDING_PAYMENT', 'CANCELLED');
+CREATE TYPE "InterventionStatus" AS ENUM ('CERRADA', 'ABIERTA', 'CANCELADA');
 
 -- CreateTable
 CREATE TABLE "User" (
@@ -102,7 +102,7 @@ CREATE TABLE "Intervention" (
     "description" TEXT NOT NULL,
     "notes" TEXT,
     "cost" DECIMAL(10,2) NOT NULL DEFAULT 0.00,
-    "status" "InterventionStatus" NOT NULL DEFAULT 'COMPLETED',
+    "status" "InterventionStatus" NOT NULL DEFAULT 'ABIERTA',
     "dateOfIntervention" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "carId" TEXT NOT NULL,
     "performedById" TEXT NOT NULL,

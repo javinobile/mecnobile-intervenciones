@@ -7,6 +7,31 @@ import { getServerSession } from "next-auth";
 import { Intervention, InterventionStatus } from "../../generated/prisma";
 import prisma from "../../lib/prisma";
 import { revalidatePath } from "next/cache";
+import { renderToBuffer } from "@react-pdf/renderer";
+import { OtComprobantePdf, PdfData } from '@/components/interventions/OtComprbantePdf';
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// --- NUEVA FUNCIÓN AUXILIAR PARA OBTENER EL LOGO EN BASE64 ---
+const getLogoBase64 = () => {
+    try {
+        // La forma correcta de referenciar la carpeta 'public' desde una Server Action
+        const logoPath = path.join(process.cwd(), 'public', 'images', 'logo_taller.jpg');
+
+        // Lee el archivo como Buffer
+        const fileBuffer = fs.readFileSync(logoPath);
+
+        // Convierte el Buffer a Base64 y lo formatea como Data URL
+        const mimeType = 'image/jpeg'; // Ajusta el MIME Type si es PNG, etc.
+        return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
+
+    } catch (error) {
+        console.error("Error al cargar el logo en el servidor:", error);
+        // Retorna un valor nulo para que el PDF se siga generando sin logo
+        return null;
+    }
+};
 
 // Definimos un tipo que incluye todos los datos necesarios para la tabla.
 export interface InterventionListItem {
@@ -57,7 +82,7 @@ export async function getInterventions(): Promise<InterventionListItem[]> {
             // Aquí, mostramos todas las que NO estén COMPLETADAS, asumiendo que son las "activas".
             where: {
                 status: {
-                    not: 'COMPLETED'
+                    notIn: ['CERRADA', 'CANCELADA']
                 }
             },
 
@@ -246,7 +271,7 @@ export async function updateIntervention(data: UpdateInterventionData): Promise<
 
         if (data.status) {
             // Validación básica del enum: asegura que el string coincida con InterventionStatus
-            const validStatus = ['COMPLETED', 'PENDING_PAYMENT', 'CANCELLED'];
+            const validStatus = ['CERRADA', 'ABIERTA', 'CANCELADA'];
             if (!validStatus.includes(data.status)) {
                 return { success: false, message: `Estado inválido: ${data.status}.` };
             }
@@ -345,5 +370,91 @@ export async function createIntervention(data: CreateInterventionData): Promise<
     } catch (error) {
         console.error('Error al crear intervención:', error);
         return { success: false, message: 'Error interno del servidor al crear la OT.' };
+    }
+}
+
+export async function generateOtPdfBase64(interventionId: string): Promise<{ success: boolean, base64Data?: string, otNumber?: number, message?: string }> {
+
+    const session = await getServerSession(authOptions);
+    if (!session) {
+        return { success: false, message: 'Acceso denegado.' };
+    }
+
+    try {
+        // 1. OBTENER DETALLES DE LA OT, COCHE Y MECÁNICO
+        const interventionData = await prisma.intervention.findUnique({
+            where: { id: interventionId },
+            include: {
+                car: true,
+                performedBy: true,
+            }
+        });
+
+        if (!interventionData) {
+            return { success: false, message: 'Orden de Trabajo no encontrada.' };
+        }
+
+        // 2. OBTENER EL DUEÑO ACTUAL DEL COCHE (consulta a CarOwnership)
+        const currentOwnership = await prisma.carOwnership.findFirst({
+            where: {
+                carId: interventionData.carId,
+                endDate: null, // Dueño actual
+            },
+            include: {
+                client: {
+                    select: {
+                        firstName: true,
+                        lastName: true,
+                        dni: true,
+                    }
+                }
+            }
+        });
+
+        // 3. MAPEAR Y TIPAR los datos para pasarlos al componente de React-PDF
+        const logoDataUrl = getLogoBase64(); // <-- ¡AQUÍ LO OBTENEMOS!
+
+        const pdfData: PdfData = { // Asumiendo que PdfData está importada
+            otNumber: interventionData.otNumber,
+            status: interventionData.status,
+            createdAt: interventionData.dateOfIntervention,
+            updatedAt: interventionData.updatedAt, // <-- AGREGAMOS ESTE CAMPO
+            mileageKm: interventionData.mileageKm,
+            notes: interventionData.notes,
+            description: interventionData.description,
+            cost: interventionData.cost.toNumber(),
+            logoSrc: logoDataUrl,
+            car: {
+                licensePlate: interventionData.car.licensePlate,
+                make: interventionData.car.make || 'N/A',
+                model: interventionData.car.model || 'N/A',
+                year: interventionData.car.year,
+                vin: interventionData.car.vin,
+            },
+            owner: currentOwnership?.client ? {
+                name: `${currentOwnership.client.firstName} ${currentOwnership.client.lastName}`,
+                dni: currentOwnership.client.dni,
+            } : null,
+            performedBy: interventionData.performedBy ? {
+                name: `${interventionData.performedBy.name || 'N/A'}`,
+            } : null,
+        };
+
+        // 4. GENERAR el PDF
+        // La importación y uso de OtComprobantePdf es segura aquí.
+        const pdfBuffer = await renderToBuffer(<OtComprobantePdf data={pdfData} />);
+
+        // 5. Convertir a Base64
+        const base64Data = pdfBuffer.toString('base64');
+
+        return {
+            success: true,
+            base64Data: base64Data,
+            otNumber: interventionData.otNumber,
+        };
+
+    } catch (error) {
+        console.error("Error al generar PDF con React-PDF:", error);
+        return { success: false, message: 'Error interno al generar el PDF. Revise el componente de plantilla y la consulta a la DB.' };
     }
 }

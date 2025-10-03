@@ -26,6 +26,7 @@ async function main() {
 
   const client1 = await prisma.client.create({
     data: {
+      dni: "546464444",
       firstName: 'Laura',
       lastName: 'Giménez',
       phone: '1123456789',
@@ -36,6 +37,7 @@ async function main() {
 
   const client2 = await prisma.client.create({
     data: {
+      dni: "546458444",
       firstName: 'Marcelo',
       lastName: 'Pereyra',
       phone: '1198765432',
@@ -109,7 +111,7 @@ async function main() {
           notes: 'Posible cambio completo de kit de embrague. Revisar volante bimasa.',
           mileageKm: 125100,
           performedById: staffUser.id,
-          status: 'PENDING_PAYMENT', // Usamos un estado que existe en el enum
+          status: 'ABIERTA', // Usamos un estado que existe en el enum
       }
   });
   

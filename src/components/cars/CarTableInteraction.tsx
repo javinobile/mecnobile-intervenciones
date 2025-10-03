@@ -22,13 +22,10 @@ export default function CarTableInteraction({ cars, totalPages, currentPage, que
             {/* Barra de Herramientas: Búsqueda y Botón Añadir (Se puede simplificar) */}
             <div className="flex justify-between items-center mb-6">
                 <SearchForm initialQuery={query} />
-
-                <Link href="/dashboard/cars/new" legacyBehavior>
-                    <a className="flex items-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg shadow-md hover:bg-green-700 transition duration-150">
-                        {/* El icono PlusCircle ya fue importado en page.tsx, pero lo necesitamos aquí */}
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
-                        Nuevo Vehículo
-                    </a>
+                <Link href="/dashboard/cars/new" className="flex items-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg shadow-md hover:bg-green-700 transition duration-150">
+                    {/* El icono PlusCircle ya fue importado en page.tsx, pero lo necesitamos aquí */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><circle cx="12" cy="12" r="10" /><path d="M12 8v8M8 12h8" /></svg>
+                    Nuevo Vehículo
                 </Link>
             </div>
 
@@ -174,8 +171,8 @@ function PaginationLink({ page, disabled, query, label, icon: Icon }: { page: nu
         <Link href={href} legacyBehavior>
             <a
                 className={`flex items-center px-4 py-2 border rounded-lg text-sm font-medium transition duration-150 ${disabled
-                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                        : 'bg-white text-blue-600 border-blue-600 hover:bg-blue-50 hover:border-blue-700'
+                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                    : 'bg-white text-blue-600 border-blue-600 hover:bg-blue-50 hover:border-blue-700'
                     }`}
                 aria-disabled={disabled}
                 onClick={(e) => disabled && e.preventDefault()}

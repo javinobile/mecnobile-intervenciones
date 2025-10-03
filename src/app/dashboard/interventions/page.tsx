@@ -12,11 +12,11 @@ export default async function InterventionsPage() {
     // Función auxiliar para colores del estado (Opcional, mejora la UI)
     const getStatusBadge = (status: InterventionListItem['status']) => {
         switch (status) {
-            case 'PENDING_PAYMENT':
+            case 'ABIERTA':
                 return <span className="inline-flex items-center px-3 py-0.5 rounded-full text-sm font-medium bg-yellow-100 text-yellow-800"><Clock className="w-4 h-4 mr-1" /> Pendiente Pago</span>;
-            case 'COMPLETED':
+            case 'CERRADA':
                 return <span className="inline-flex items-center px-3 py-0.5 rounded-full text-sm font-medium bg-green-100 text-green-800"><CheckCircle className="w-4 h-4 mr-1" /> Completada</span>;
-            case 'CANCELLED':
+            case 'CANCELADA':
                 return <span className="inline-flex items-center px-3 py-0.5 rounded-full text-sm font-medium bg-red-100 text-red-800"><XCircle className="w-4 h-4 mr-1" /> Cancelada</span>;
             default:
                 // Si tuvieras un estado PENDING, lo pondrías aquí

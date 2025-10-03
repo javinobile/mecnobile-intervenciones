@@ -81,6 +81,7 @@ model Client {
   lastName         String
   phone            String?
   email            String?        @unique // No siempre tendrán email, pero si lo tienen, es único.
+  dni              String         @unique
   address          String?
   // Relación con la propiedad del coche (el 'dueño actual' y los pasados)
   ownedCarsHistory CarOwnership[]
@@ -98,7 +99,7 @@ model Car {
   color        String?
   make         String?
   model        String?
-  year       Int?
+  year         Int?
   initialKm    Int
   unlockCodes  Json?
 
@@ -128,9 +129,9 @@ model CarOwnership {
 
 // Definición para el estado del pago o la intervención si fuera necesario, aunque por ahora solo registramos.
 enum InterventionStatus {
-  COMPLETED
-  PENDING_PAYMENT
-  CANCELLED
+  CERRADA
+  ABIERTA
+  CANCELADA
 }
 
 model Intervention {
@@ -143,7 +144,7 @@ model Intervention {
   cost        Decimal @default(0.00) @db.Decimal(10, 2) // Costo total del trabajo
 
   // Estado y Fechas
-  status             InterventionStatus @default(COMPLETED)
+  status             InterventionStatus @default(ABIERTA)
   dateOfIntervention DateTime           @default(now())
 
   // Conexión con el Coche

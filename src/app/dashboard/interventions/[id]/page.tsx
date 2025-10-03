@@ -1,6 +1,7 @@
 // app/(dashboard)/interventions/[id]/page.tsx
 import { getInterventionDetail } from '@/actions/intervention.actions';
 import InterventionEditForm from '@/components/interventions/InterventionsForm';
+import PdfGeneratorButton from '@/components/interventions/PdfGeneratorButton';
 import { Wrench, Car, User, DollarSign, Clock, Hash } from 'lucide-react';
 import Link from 'next/link';
 
@@ -38,9 +39,9 @@ export default async function InterventionDetailPage({ params }: InterventionDet
 
     // Asignación de colores de estado (igual que en el listado)
     const statusClasses = {
-        COMPLETED: 'bg-green-100 text-green-800',
-        PENDING_PAYMENT: 'bg-yellow-100 text-yellow-800',
-        CANCELLED: 'bg-red-100 text-red-800',
+        CERRADA: 'bg-green-100 text-green-800',
+        ABIERTA: 'bg-yellow-100 text-yellow-800',
+        CANCELADA: 'bg-red-100 text-red-800',
     };
     const statusBadge = (
         <span className={`px-3 py-1 text-sm font-semibold rounded-full ${statusClasses[intervention.status]}`}>
@@ -138,6 +139,11 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                             Ver historial del vehículo
                         </Link>
                     </section>
+
+                                       {/* BOTÓN DE GENERACIÓN DE PDF (AQUÍ LO INSERTAMOS) */}
+                    <div className="pt-4 border-t border-gray-200">
+                         <PdfGeneratorButton interventionId={intervention.id} />
+                    </div>
 
                     {/* Tarjeta del Cliente */}
                     {intervention.owner && (
