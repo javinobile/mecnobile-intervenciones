@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  # ---------------------------------------------------
+  # 1. Servicio de PostgreSQL (Base de Datos)
+  # ---------------------------------------------------
+  db:
+    image: postgres:17-alpine # Versión 17 de PostgreSQL (imagen ligera)
+    container_name: taller_db
+    restart: always
+    environment:
+      # Credenciales y nombre de la base de datos (AJUSTA ESTOS VALORES)
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: Root.1234
+      POSTGRES_DB: mecnobile-db
+    ports:
+      # Mapea el puerto del contenedor (5432) al host (5432)
+      - "5432:5432"
+    volumes:
+      # Persistencia de datos: almacena los datos en un volumen para que persistan
+      - postgres_data:/var/lib/postgresql/data
+      # Opcional: Si necesitas scripts de inicialización, descomenta:
+      # - ./init-scripts:/docker-entrypoint-initdb.d
+
+  # ---------------------------------------------------
+  # 2. Servicio de Aplicación (Taller Node.js/Next.js)
+  # ---------------------------------------------------
+  app:
+    build:
+      context: . # Busca el Dockerfile en el directorio actual
+      dockerfile: Dockerfile
+    container_name: taller_app
+    restart: always
+    ports:
+      # Mapea el puerto del host (3000) al puerto de la aplicación (3000)
+      - "3000:3000"
+    environment:
+      # La URL de conexión a la BD, usando el nombre del servicio 'db'
+      # Asegúrate de que coincida con tus credenciales
+      DATABASE_URL: postgresql://root:Root.1234@db:5432/mecnobile-db?schema=public
+      AUTH_SECRET: KM2MEfNVxgH0NYXdBG0Q2FY0/dOf3aPKHygkO3NjOx0=
+    
+    # Asegura que la BD esté levantada antes de que inicie la app
+    depends_on:
+      - db
+    
+    # Mapea el código local al contenedor para desarrollo (opcional)
+    # Si quieres usar Docker solo para producción, puedes comentar esta línea
+    # volumes: 
+    #   - .:/app
+    #   - /app/node_modules # Evita sobreescribir node_modules del contenedor con el host
+
+# ---------------------------------------------------
+# 3. Volúmenes
+# ---------------------------------------------------
+volumes:
+  postgres_data:
