@@ -114,7 +114,9 @@ export default function Sidebar() {
       {/* Pie de página/Logout */}
       <div className="p-4 border-t border-gray-700">
         <button
-          onClick={() => signOut({ callbackUrl: '/login' })}
+          onClick={() => signOut({
+            callbackUrl: `${process.env.NEXT_PUBLIC_BASE_URL || window.location.origin}/login`
+          })}
           className="w-full text-left p-3 rounded-lg text-red-400 hover:bg-gray-700 hover:text-red-300 transition duration-150 ease-in-out flex items-center"
         >
           <LogOut className="w-5 h-5 mr-3" />
