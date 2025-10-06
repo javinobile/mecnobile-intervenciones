@@ -59,7 +59,7 @@ export default function NewCarPage() {
   };
 
   return (
-    <main className="flex-grow p-8 ml-64 bg-gray-50">
+    <>
 
       {/* ... (Encabezados y Sección 1: Propietario) ... */}
 
@@ -123,7 +123,7 @@ export default function NewCarPage() {
           </button>
         </div>
       </form>
-    </main>
+    </>
   );
 }
 

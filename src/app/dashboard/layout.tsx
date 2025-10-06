@@ -18,18 +18,18 @@ export default async function DashboardLayout({
 
   // Redirección del lado del servidor si no hay sesión (redundante con middleware, pero robusto)
   if (!session) {
-     redirect('/login');
+    redirect('/login');
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex h-screen">
       {/* 1. Barra Lateral: Persistente y fija */}
       <Sidebar />
-      
+
       {/* 2. Área de Contenido Principal */}
-      <main className="flex-grow p-8 bg-gray-50"> 
+      <main className="flex-grow p-4 lg:p-10 mt-8 lg:ml-64 bg-gray-50">
         {/* El ml-64 sigue siendo necesario para compensar el ancho de la sidebar fija */}
-        {children} 
+        {children}
       </main>
     </div>
   );

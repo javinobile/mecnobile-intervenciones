@@ -28,9 +28,9 @@ async function getDashboardData() {
         // 2. Obtener las métricas clave
         const [totalCars, totalClients, lastInterventions] = await prisma.$transaction([
             // Cantidad de Automóviles registrados
-            prisma.car.count(), 
+            prisma.car.count(),
             // Cantidad de Clientes registrados
-            prisma.client.count(), 
+            prisma.client.count(),
             // Últimas 5 Intervenciones
             prisma.intervention.findMany({
                 take: 5,
@@ -66,15 +66,15 @@ async function getDashboardData() {
 // COMPONENTE PRINCIPAL (Server Component)
 // ===============================================
 export default async function DashboardPage() {
-    
+
     // Obtener todos los datos necesarios en el servidor
     const { authorized, session, data } = await getDashboardData();
-    
+
     // Redirección si no está autenticado (aunque el middleware lo hará primero)
     if (!session) {
         redirect('/login');
     }
-    
+
     // Autorización basada en Rol (la lógica de getDashboardData ya lo maneja)
     if (!authorized) {
         return (
@@ -85,12 +85,12 @@ export default async function DashboardPage() {
             </main>
         );
     }
-    
+
     // Si la data falla por error de DB, usamos 0 y arrays vacíos
     const { totalCars, totalClients, lastInterventions } = data || { totalCars: 0, totalClients: 0, lastInterventions: [] };
 
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-100">
+        <>
             <h1 className="text-4xl font-extrabold text-gray-900 mb-6">
                 Panel Principal
             </h1>
@@ -101,7 +101,7 @@ export default async function DashboardPage() {
 
             {/* Métrica Dinámica */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                
+
                 <Card
                     title="Automóviles Registrados"
                     value={totalCars}
@@ -118,7 +118,7 @@ export default async function DashboardPage() {
                     title="Órdenes de Trabajo (Últimos 30 días)"
                     // NOTA: Para obtener este valor, necesitarías una consulta extra a la DB. 
                     // Por ahora, usamos un valor fijo para mantener el diseño.
-                    value={"N/A"} 
+                    value={"N/A"}
                     color="bg-yellow-600"
                     icon={Settings}
                 />
@@ -127,12 +127,12 @@ export default async function DashboardPage() {
             {/* Sección de Actividad Reciente */}
             <div className="mt-10 bg-white p-6 rounded-xl shadow-lg border border-gray-200">
                 <h2 className="text-2xl font-semibold mb-4 border-b pb-2 text-gray-800">Últimas 5 Intervenciones</h2>
-                
+
                 <InterventionList interventions={lastInterventions as any[]} />
 
             </div>
 
-        </main>
+        </>
     );
 }
 
@@ -171,7 +171,7 @@ const InterventionList = ({ interventions }: InterventionListProps) => {
             </p>
         );
     }
-    
+
     return (
         <div className="space-y-4">
             {interventions.map((ot, index) => (

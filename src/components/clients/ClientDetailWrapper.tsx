@@ -22,7 +22,7 @@ export function ClientDetailWrapper({ details }: { details: ClientDetails }) {
     const editableClientData = client as Omit<ClientDetails, 'carHistory'>;
 
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
 
             {/* Encabezado */}
             <div className="flex justify-between items-center mb-6 border-b pb-4">
@@ -99,7 +99,7 @@ export function ClientDetailWrapper({ details }: { details: ClientDetails }) {
                     </div>
                 </div>
             )}
-        </main>
+        </>
     );
 }
 

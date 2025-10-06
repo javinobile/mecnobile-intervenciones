@@ -19,12 +19,12 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
     // 1. Verificación de Rol (Server Side)
     if (!session || session.user.role !== 'ADMIN') {
         return (
-            <main className="flex-grow p-8 ml-64 bg-gray-50">
+            <>
                 <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4" role="alert">
                     <p className="font-bold flex items-center"><AlertTriangle className="w-5 h-5 mr-2"/> Acceso Restringido</p>
                     <p>Esta sección es solo para administradores.</p>
                 </div>
-            </main>
+            </>
         );
     }
 
@@ -35,7 +35,7 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
     const { users, totalPages, currentPage: actualPage } = await getUsersPage(currentPage, query);
 
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
             <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
                     <Users className="w-8 h-8 mr-3 text-red-600" />
@@ -53,6 +53,6 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
                     currentUserId={session.user.id} // Necesario para evitar que el Admin se modifique a sí mismo
                 />
             </div>
-        </main>
+        </>
     );
 }

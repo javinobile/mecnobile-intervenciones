@@ -31,7 +31,7 @@ export default async function UserProfilePage() {
     }
     
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
             <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
                     <UserIcon className="w-8 h-8 mr-3 text-blue-600" />
@@ -63,6 +63,6 @@ export default async function UserProfilePage() {
                     initialEmail={user.email} 
                 />
             </div>
-        </main>
+        </>
     );
 }

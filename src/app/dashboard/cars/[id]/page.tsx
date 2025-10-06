@@ -46,7 +46,7 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
     };
 
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
 
             {/* Encabezado y Botones de Acción */}
             <div className="flex justify-between items-center mb-6 border-b pb-4">
@@ -113,7 +113,7 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
                 </div>
             </div>
 
-        </main>
+        </>
     );
 }
 

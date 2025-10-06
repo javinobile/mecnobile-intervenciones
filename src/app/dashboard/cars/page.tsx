@@ -22,7 +22,7 @@ export default async function CarsPage({ searchParams }: CarsPageProps) {
     const { cars, totalPages } = await getCarsPage(currentPage, query);
     
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
             
             <h1 className="text-4xl font-extrabold text-gray-900 mb-2 flex items-center">
                 <Car className="w-8 h-8 mr-3 text-blue-600" />
@@ -40,6 +40,6 @@ export default async function CarsPage({ searchParams }: CarsPageProps) {
                 query={query}
             />
             
-        </main>
+        </>
     );
 }

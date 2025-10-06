@@ -50,7 +50,7 @@ export default async function InterventionDetailPage({ params }: InterventionDet
     );
 
     return (
-        <main className="flex-grow p-8 ml-64 bg-gray-50">
+        <>
 
             <div className="flex justify-between items-center mb-6 border-b pb-4">
                 <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
@@ -164,6 +164,6 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                     )}
                 </div>
             </div>
-        </main>
+        </>
     );
 }
