@@ -26,9 +26,7 @@ services:
   # 2. Servicio de Aplicación (Taller Node.js/Next.js)
   # ---------------------------------------------------
   app:
-    build:
-      context: . # Busca el Dockerfile en el directorio actual
-      dockerfile: Dockerfile
+    image: localhost:5000/taller-app:latest
     container_name: taller_app
     restart: always
     ports:
