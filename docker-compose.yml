@@ -37,6 +37,7 @@ services:
       # Asegúrate de que coincida con tus credenciales
       DATABASE_URL: postgresql://root:Root.1234@db:5432/mecnobile-db?schema=public
       AUTH_SECRET: KM2MEfNVxgH0NYXdBG0Q2FY0/dOf3aPKHygkO3NjOx0=
+      NEXT_PUBLIC_BASE_URL: https://sistema.mecnobile.com.ar
     
     # Asegura que la BD esté levantada antes de que inicie la app
     depends_on:

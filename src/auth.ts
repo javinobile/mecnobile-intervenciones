@@ -111,7 +111,8 @@ export const authOptions: AuthOptions = {
   // 5. Páginas personalizadas (ej. /login)
   pages: {
     signIn: "/login",
-    error: "/auth/error"
+    error: "/auth/error",
+    signOut: "/login"
   },
 
   // 6. Configuración de seguridad
