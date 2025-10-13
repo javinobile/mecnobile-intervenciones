@@ -17,13 +17,13 @@ import * as path from 'path';
 const getLogoBase64 = () => {
     try {
         // La forma correcta de referenciar la carpeta 'public' desde una Server Action
-        const logoPath = path.join(process.cwd(), 'public', 'images', 'logo_taller.jpg');
+        const logoPath = path.join(process.cwd(), 'public', 'images', 'logo-taller.png');
 
         // Lee el archivo como Buffer
         const fileBuffer = fs.readFileSync(logoPath);
 
         // Convierte el Buffer a Base64 y lo formatea como Data URL
-        const mimeType = 'image/jpeg'; // Ajusta el MIME Type si es PNG, etc.
+        const mimeType = 'image/png'; // Ajusta el MIME Type si es PNG, etc.
         return `data:${mimeType};base64,${fileBuffer.toString('base64')}`;
 
     } catch (error) {
