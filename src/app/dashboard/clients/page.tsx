@@ -16,8 +16,10 @@ interface ClientsPageProps {
 // Convertimos la función en ASÍNCRONA
 export default async function ClientsPage({ searchParams }: ClientsPageProps) {
 
-    const currentPage = parseInt(searchParams.page || '1');
-    const query = searchParams.q || '';
+    const search = await searchParams;
+
+    const currentPage = parseInt(search.page || '1');
+    const query = search.q || '';
 
     // 1. OBTENER DATOS REALES en el servidor
     const { clients, totalPages } = await getClientsPage(currentPage, query);

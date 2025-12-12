@@ -23,7 +23,9 @@ const formatKm = (km: number) => {
 
 export default async function CarDetailPage({ params }: CarDetailPageProps) {
 
-    const carId = params.id;
+    const resolved = await params;
+
+    const carId = resolved.id;
     const details = await getCarDetails(carId);
 
     if (!details) {

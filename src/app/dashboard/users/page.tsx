@@ -13,6 +13,8 @@ interface UsersPageProps {
 }
 
 export default async function UsersPage({ searchParams }: UsersPageProps) {
+
+    const resolved = await searchParams;
     
     const session = await getServerSession(authOptions);
     
@@ -29,8 +31,8 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
     }
 
     // 2. Obtención de Datos
-    const currentPage = parseInt(searchParams.page || '1');
-    const query = searchParams.query || '';
+    const currentPage = parseInt(resolved.page || '1');
+    const query = resolved.query || '';
     
     const { users, totalPages, currentPage: actualPage } = await getUsersPage(currentPage, query);
 

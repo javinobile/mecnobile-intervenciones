@@ -14,9 +14,11 @@ interface CarsPageProps {
 
 // Función ASÍNCRONA
 export default async function CarsPage({ searchParams }: CarsPageProps) {
+
+    const resolved = await searchParams;
     
-    const currentPage = parseInt(searchParams.page || '1');
-    const query = searchParams.q || '';
+    const currentPage = parseInt(resolved.page || '1');
+    const query = resolved.q || '';
     
     // 1. Obtener datos en el servidor
     const { cars, totalPages } = await getCarsPage(currentPage, query);

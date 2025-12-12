@@ -12,7 +12,9 @@ interface ClientDetailPageProps {
 
 export default async function ClientDetailPage({ params }: ClientDetailPageProps) {
 
-    const clientId = params.id;
+    const resolved = await params;
+
+    const clientId = resolved.id;
     const details = await getClientDetails(clientId); // Carga de datos en el servidor
 
     if (!details) {

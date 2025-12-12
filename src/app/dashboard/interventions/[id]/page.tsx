@@ -17,7 +17,9 @@ interface InterventionDetailPageProps {
 // Hacemos la página ASÍNCRONA y obtenemos el ID de los params
 export default async function InterventionDetailPage({ params }: InterventionDetailPageProps) {
 
-    const intervention = await getInterventionDetail(params.id);
+    const resolved = await params;
+
+    const intervention = await getInterventionDetail(resolved.id);
 
     if (!intervention) {
         return (
