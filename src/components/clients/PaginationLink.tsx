@@ -30,17 +30,13 @@ export default function PaginationLink({ page, disabled, query, label, iconType 
     return (
         <Link
             href={href}
-            passHref
-
             className={`${baseClasses} ${disabledClasses}`}
             aria-disabled={disabled}
             onClick={(e) => { if (disabled) e.preventDefault(); }}
         >
-            {/* 4. Renderiza el icono dentro del Client Component */}
             {iconType === 'left' && <IconComponent className="w-4 h-4 mr-2" />}
             {label}
             {iconType === 'right' && <IconComponent className="w-4 h-4 ml-2" />}
-
         </Link>
     );
 }

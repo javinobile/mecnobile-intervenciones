@@ -45,7 +45,7 @@ COPY . .
 RUN npx prisma generate
 
 # Ejecuta el build de Next.js
-RUN yarn build 
+RUN yarn build
 
 # -----------------------------------------------------------
 # RUNNER: Imagen de Producción (FINAL, la más pequeña)
@@ -53,31 +53,19 @@ RUN yarn build
 FROM base AS runner
 WORKDIR /app
 
-# Configuración de variables de entorno de producción
 ENV NODE_ENV=production
-# ENV NEXT_TELEMETRY_DISABLED 1
 
-# Crea el grupo y usuario para seguridad
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copia el 'standalone' y los 'static' (la magia de la optimización)
-# 🚨 IMPORTANTE: Asegúrate de que tu `next.config.js` tenga `output: 'standalone',`
+# Standalone de Next.js (requiere output: 'standalone' en next.config)
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-
-# Asignar permisos sobre el directorio (aunque el standalone ya es eficiente)
-RUN chown -R nextjs:nodejs /app
-
-# Ajusta tu DATABASE_URL aquí para que use el nombre del servicio 'db'
-# ENV DATABASE_URL postgresql://user:password@db:5432/db_taller?schema=public
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
 USER nextjs
 
 EXPOSE 3000
-
 ENV PORT=3000
 
-# El comando de inicio para la imagen standalone
 CMD ["node", "server.js"]

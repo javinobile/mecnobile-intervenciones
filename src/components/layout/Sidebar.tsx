@@ -3,106 +3,108 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
-import { Car, FileText, Settings, Users, User, LogOut, Home, User2, History, LucideProps, Menu, X } from 'lucide-react'; // <-- ¡IMPORTANTE! Añadir 'Menu' y 'X'
-import { ForwardRefExoticComponent, RefAttributes, useState } from 'react'; // <-- ¡IMPORTANTE! Añadir 'useState'
+import {
+  Car, Users, User, LogOut, Home, User2, History,
+  LucideProps, Menu, X, Wrench, PlusCircle, Cog
+} from 'lucide-react';
+import { ForwardRefExoticComponent, RefAttributes, useState } from 'react';
 
 interface LinkItem {
   name: string
   href: string
   icon: ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>,
   isExternal?: boolean
+  adminOnly?: boolean
+  mechanicHideMasters?: boolean
 }
 
-// ... (baseNavItems y externalNavItems se mantienen iguales) ...
 const baseNavItems: LinkItem[] = [
   { name: 'Inicio', href: '/dashboard', icon: Home },
-  { name: 'Vehículos', href: '/dashboard/cars', icon: Car },
-  { name: 'Clientes', href: '/dashboard/clients', icon: Users },
-  { name: 'Órdenes de Trabajo', href: '/dashboard/interventions', icon: Settings },
+  { name: 'Vehículos', href: '/dashboard/cars', icon: Car, adminOnly: true },
+  { name: 'Clientes', href: '/dashboard/clients', icon: Users, adminOnly: true },
+  { name: 'Órdenes de Trabajo', href: '/dashboard/interventions', icon: Wrench },
+  { name: 'Abrir OT', href: '/dashboard/interventions/new', icon: PlusCircle },
+  { name: 'Configuración', href: '/dashboard/settings', icon: Cog, adminOnly: true },
 ];
 
-const externalNavItems = [
+const externalNavItems: LinkItem[] = [
   {
     name: 'Historial Anterior',
     href: 'https://historial.mecnobile.com.ar',
     icon: History,
-    isExternal: true
+    isExternal: true,
   }
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
-  
-  // 🚨 1. Estado para controlar la apertura/cierre en móviles
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); 
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // ... (Lógica para construir navItems se mantiene igual) ...
-  let navItems = [...baseNavItems, ...externalNavItems];
-  navItems.push({ name: 'Mi Perfil', href: '/dashboard/profile', icon: User });
   const isAdmin = session?.user?.role === 'ADMIN';
+
+  let navItems: LinkItem[] = [
+    ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
+    ...externalNavItems,
+    { name: 'Mi Perfil', href: '/dashboard/profile', icon: User },
+  ];
+
   if (isAdmin) {
     navItems.push({ name: 'Usuarios', href: '/dashboard/users', icon: User2 });
   }
 
-  // Función para cerrar el sidebar (útil al navegar en móvil)
-  const closeSidebar = () => setIsSidebarOpen(false);
+  // Solo se resalta la ruta más específica que coincide, así "Abrir OT"
+  // no enciende también "Órdenes de Trabajo".
+  const activeHref = navItems
+    .filter((item) => !item.isExternal)
+    .filter((item) => pathname === item.href || pathname.startsWith(item.href + '/'))
+    .reduce<string | null>(
+      (best, item) => (best === null || item.href.length > best.length ? item.href : best),
+      null
+    );
 
+  const closeSidebar = () => setIsSidebarOpen(false);
 
   return (
     <>
-      {/* 🚨 2. Botón de Menú para MÓVILES (fuera del sidebar) */}
-      {/* Es visible solo en pantallas pequeñas (< lg) */}
       <button
-        className="fixed top-4 left-4 z-50 p-2 rounded-lg bg-blue-600 text-white lg:hidden shadow-lg"
+        className="fixed top-3 left-3 z-50 p-2.5 min-h-11 min-w-11 rounded-md bg-blue-600 text-white lg:hidden shadow-md flex items-center justify-center"
         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
         aria-label="Toggle Sidebar"
       >
-        {isSidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+        {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
       </button>
 
-      {/* 🚨 3. Overlay oscuro para MÓVILES (cuando el menú está abierto) */}
-      {/* Solo visible en móviles y cuando el sidebar está abierto */}
       {isSidebarOpen && (
-        <div 
-          className="fixed inset-0 bg-black opacity-50 z-30 lg:hidden"
-          onClick={closeSidebar} // Cierra el sidebar al hacer clic en el overlay
+        <div
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden"
+          onClick={closeSidebar}
         ></div>
       )}
 
-      {/* 🚨 4. Sidebar Principal: Clases Responsivas Clave */}
-      <div 
-        // El sidebar se posiciona fijo. En móviles (< lg) se oculta con 'hidden'
-        // y se muestra con un estado dinámico si está abierto.
-        className={`flex flex-col w-64 bg-gray-800 text-white h-full fixed top-0 left-0 z-40
+      <div
+        className={`flex flex-col w-56 bg-gray-800 text-white h-full fixed top-0 left-0 z-40
           transition-transform duration-300 ease-in-out
-          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} 
+          ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
           lg:translate-x-0 lg:flex
         `}
       >
-
-        {/* ... (Encabezado y Info de Usuario sin cambios) ... */}
-        <div className="p-4 text-2xl font-extrabold border-b border-gray-700">
-          Nóbile, Tecnología
+        <div className="px-3 py-3 text-lg font-bold border-b border-gray-700 tracking-tight">
+          Nóbile
         </div>
 
-        <div className="p-4 border-b border-gray-700">
-          <p className="text-sm font-semibold">{session?.user?.name || 'Cargando...'}</p>
-          <p className="text-xs text-gray-400">{session?.user?.email}</p>
-          <p className="text-xs mt-1 font-bold text-yellow-300">{session?.user?.role}</p>
+        <div className="px-3 py-2.5 border-b border-gray-700">
+          <p className="text-sm font-semibold truncate">{session?.user?.name || 'Cargando...'}</p>
+          <p className="text-xs text-gray-400 truncate">{session?.user?.email}</p>
+          <p className="text-[11px] mt-0.5 font-semibold text-yellow-300">{session?.user?.role}</p>
         </div>
 
-
-        {/* Navegación Principal */}
-        <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
+        <nav className="flex-grow px-2 py-2 space-y-0.5 overflow-y-auto">
           {navItems.map((item) => {
-            const isActive = pathname.startsWith(item.href) && item.href !== '/dashboard'
-              ? true
-              : pathname === item.href;
+            const isActive = !item.isExternal && item.href === activeHref;
 
             const Icon = item.icon;
 
-            // Lógica para manejar enlaces externos (<a>) vs. enlaces internos (Next Link)
             if (item.isExternal) {
               return (
                 <a
@@ -110,43 +112,40 @@ export default function Sidebar() {
                   href={item.href}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={closeSidebar} // 🚨 Cierra el sidebar al hacer clic en móvil
-                  className={`flex items-center p-3 rounded-lg transition duration-150 ease-in-out 
-                    text-gray-300 hover:bg-red-800 hover:text-white border-2 border-red-500 hover:border-red-500
-                  `}
+                  onClick={closeSidebar}
+                  className="flex items-center px-2.5 py-2.5 min-h-11 rounded-md text-sm transition duration-150
+                    text-gray-300 hover:bg-red-800 hover:text-white border border-red-500/80"
                 >
-                  <Icon className="w-5 h-5 mr-3" />
+                  <Icon className="w-4 h-4 mr-2.5 shrink-0" />
                   <span className="font-medium">{item.name}</span>
                 </a>
               );
             }
 
-            // Lógica para enlaces internos de Next.js
             return (
               <Link
                 key={item.name} href={item.href}
-                onClick={closeSidebar} // 🚨 Cierra el sidebar al hacer clic en móvil
-                className={`flex items-center p-3 rounded-lg transition duration-150 ease-in-out ${isActive
-                  ? 'bg-blue-600 text-white shadow-md'
+                onClick={closeSidebar}
+                className={`flex items-center px-2.5 py-2.5 min-h-11 rounded-md text-sm transition duration-150 ${isActive
+                  ? 'bg-blue-600 text-white'
                   : 'text-gray-300 hover:bg-gray-700 hover:text-white'
                   }`}
               >
-                <Icon className="w-5 h-5 mr-3" />
+                <Icon className="w-4 h-4 mr-2.5 shrink-0" />
                 <span className="font-medium">{item.name}</span>
               </Link>
             );
           })}
         </nav>
 
-        {/* Pie de página/Logout */}
-        <div className="p-4 border-t border-gray-700">
+        <div className="px-2 py-2 border-t border-gray-700">
           <button
             onClick={() => signOut({
               callbackUrl: `/`
             })}
-            className="w-full text-left p-3 rounded-lg text-red-400 hover:bg-gray-700 hover:text-red-300 transition duration-150 ease-in-out flex items-center"
+            className="w-full text-left px-2.5 py-2.5 min-h-11 rounded-md text-sm text-red-400 hover:bg-gray-700 hover:text-red-300 transition duration-150 flex items-center"
           >
-            <LogOut className="w-5 h-5 mr-3" />
+            <LogOut className="w-4 h-4 mr-2.5" />
             Cerrar Sesión
           </button>
         </div>

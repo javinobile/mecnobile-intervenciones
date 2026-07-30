@@ -106,16 +106,25 @@ async function main() {
   const intervention1 = await prisma.intervention.create({
       data: {
           otNumber: 1,
-          carId: car2.id, // Usamos el Clio de Marcelo
+          carId: car2.id,
+          clientId: client2.id,
           description: 'El embrague está muy duro y huele a quemado.',
           notes: 'Posible cambio completo de kit de embrague. Revisar volante bimasa.',
           mileageKm: 125100,
           performedById: staffUser.id,
-          status: 'ABIERTA', // Usamos un estado que existe en el enum
+          status: 'ABIERTA',
       }
   });
-  
+
   console.log(`OT de prueba #${intervention1.otNumber} creada.`);
+
+  await prisma.workshopSettings.upsert({
+    where: { id: 'default' },
+    update: {},
+    create: { id: 'default', hourlyRate: 15000 },
+  });
+  console.log('WorkshopSettings creado (precio hora default).');
+
 
 }
 

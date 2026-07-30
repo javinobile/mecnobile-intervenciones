@@ -10,7 +10,6 @@
 
 'use client';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { ClientListItem, getClientsPage } from '@/actions/client.actions';
 import { Search } from 'lucide-react';
 
 export default function SearchForm({ initialQuery }: { initialQuery: string }) {
@@ -35,19 +34,19 @@ export default function SearchForm({ initialQuery }: { initialQuery: string }) {
     };
 
     return (
-        <form onSubmit={handleSubmit} className="flex items-center space-x-3 w-full max-w-md">
+        <form onSubmit={handleSubmit} className="flex items-center space-x-2 w-full max-w-md">
             <input
                 type="text"
                 name="q"
                 placeholder="Buscar por Nombre, DNI, Teléfono o Email..."
                 defaultValue={initialQuery}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 text-gray-800"
+                className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 text-gray-800"
             />
             <button
                 type="submit"
-                className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-150"
+                className="p-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition duration-150"
             >
-                <Search className="w-5 h-5" />
+                <Search className="w-4 h-4" />
             </button>
         </form>
     );

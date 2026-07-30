@@ -1,83 +1,173 @@
 // app/components/interventions/OtComprobantePdf.tsx
 import React from 'react';
-import { Document, Page, Text, View, StyleSheet, Font, Image } from '@react-pdf/renderer';
+import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 
-// --- Definición de Estilos (Modificamos 'costTotal' y agregamos 'metadata') ---
+const BRAND = '#1E40AF';
+const BRAND_SOFT = '#EFF4FF';
+const BORDER = '#D1D5DB';
+const MUTED = '#6B7280';
+const TEXT = '#374151';
+
 const styles = StyleSheet.create({
     page: {
-        padding: 30,
+        paddingHorizontal: 28,
+        paddingTop: 24,
+        paddingBottom: 32,
         fontFamily: 'Helvetica',
+        color: TEXT,
+        fontSize: 9,
     },
-    header: {
-        fontSize: 24,
-        marginBottom: 10,
-        textAlign: 'center',
-        color: '#1E40AF',
-        fontWeight: 'bold',
+    headerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingBottom: 8,
+        borderBottomWidth: 2,
+        borderBottomColor: BRAND,
+        marginBottom: 12,
     },
     logo: {
-        width: 120, // Ajusta el ancho según tu imagen
-        height: 60, // Ajusta la altura según tu imagen
-        marginBottom: 10,
-        alignSelf: 'center', // Centra el logo horizontalmente
+        width: 90,
+        height: 45,
+        objectFit: 'contain',
     },
-    subheader: {
+    headerRight: {
+        alignItems: 'flex-end',
+    },
+    title: {
         fontSize: 16,
-        marginTop: 15,
+        color: BRAND,
+        fontFamily: 'Helvetica-Bold',
+    },
+    headerMeta: {
+        fontSize: 8,
+        color: MUTED,
+        marginTop: 2,
+    },
+    statusBadge: {
+        fontSize: 8,
+        color: BRAND,
+        backgroundColor: BRAND_SOFT,
+        borderRadius: 3,
+        paddingVertical: 2,
+        paddingHorizontal: 6,
+        marginTop: 4,
+        fontFamily: 'Helvetica-Bold',
+    },
+    columnsRow: {
+        flexDirection: 'row',
+        gap: 10,
+        marginBottom: 10,
+    },
+    card: {
+        flex: 1,
+        borderWidth: 1,
+        borderColor: BORDER,
+        borderRadius: 4,
+        padding: 8,
+    },
+    cardTitle: {
+        fontSize: 9,
+        color: BRAND,
+        fontFamily: 'Helvetica-Bold',
         marginBottom: 5,
-        borderBottomWidth: 1,
-        borderBottomColor: '#ccc',
-        paddingBottom: 2,
-        color: '#4B5563',
+        textTransform: 'uppercase',
     },
     dataRow: {
-        fontSize: 10,
         flexDirection: 'row',
-        marginBottom: 3,
+        marginBottom: 2.5,
     },
     label: {
-        width: '30%',
-        fontWeight: 'bold',
+        width: '40%',
+        fontSize: 8.5,
+        color: MUTED,
+        fontFamily: 'Helvetica-Bold',
     },
     value: {
-        width: '70%',
+        width: '60%',
+        fontSize: 8.5,
+        color: TEXT,
     },
-    description: {
-        marginTop: 10,
-        fontSize: 10,
-        border: '1pt solid #ccc',
-        padding: 10,
-        minHeight: 80,
-        whiteSpace: 'pre-wrap',
-    },
-    // <-- CAMBIO CLAVE: Reducción del tamaño de fuente a 20 (antes 28)
-    costTotal: {
-        fontSize: 20,
-        marginTop: 20,
-        textAlign: 'right',
-        color: '#059669',
-        fontWeight: 'bold',
-    },
-    // <-- NUEVO ESTILO: Para la trazabilidad/metadata
-    metadata: {
+    sectionTitle: {
         fontSize: 9,
-        marginTop: 15,
-        paddingTop: 5,
-        borderTopWidth: 1,
-        borderTopColor: '#e5e7eb',
-        color: '#6B7280',
+        color: BRAND,
+        fontFamily: 'Helvetica-Bold',
+        marginBottom: 3,
+        textTransform: 'uppercase',
+    },
+    textBox: {
+        borderWidth: 1,
+        borderColor: BORDER,
+        borderRadius: 4,
+        padding: 7,
+        minHeight: 30,
+        marginBottom: 10,
+    },
+    textBoxContent: {
+        fontSize: 9,
+        lineHeight: 1.4,
+    },
+    tableHeader: {
+        flexDirection: 'row',
+        backgroundColor: BRAND_SOFT,
+        borderWidth: 1,
+        borderColor: BORDER,
+        paddingVertical: 4,
+        paddingHorizontal: 6,
+    },
+    tableRow: {
+        flexDirection: 'row',
+        borderLeftWidth: 1,
+        borderRightWidth: 1,
+        borderBottomWidth: 1,
+        borderColor: BORDER,
+        paddingVertical: 4,
+        paddingHorizontal: 6,
+    },
+    colType: { width: '18%', fontSize: 8 },
+    colDesc: { width: '62%', fontSize: 8 },
+    colAmount: { width: '20%', fontSize: 8, textAlign: 'right' },
+    totalRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        marginTop: 6,
+        marginBottom: 10,
+    },
+    totalLabel: {
+        fontSize: 10,
+        fontFamily: 'Helvetica-Bold',
+        marginRight: 8,
+    },
+    totalValue: {
+        fontSize: 11,
+        fontFamily: 'Helvetica-Bold',
+        color: BRAND,
+    },
+    metadata: {
+        fontSize: 7.5,
+        marginTop: 6,
+        color: MUTED,
         textAlign: 'right',
     },
     footer: {
-        fontSize: 8,
+        position: 'absolute',
+        bottom: 16,
+        left: 28,
+        right: 28,
+        fontSize: 7,
         textAlign: 'center',
-        marginTop: 30,
-        color: '#6B7280',
+        color: MUTED,
         paddingTop: 5,
         borderTopWidth: 1,
-        borderTopColor: '#ccc',
-    }
+        borderTopColor: BORDER,
+    },
 });
+
+const typeLabels: Record<string, string> = {
+    REPUESTO: 'Repuesto',
+    MANO_DE_OBRA: 'M. Obra',
+    TRABAJO_TERCERO: 'Terc.',
+};
 
 export interface PdfData {
     otNumber: number;
@@ -89,87 +179,108 @@ export interface PdfData {
     mileageKm: number;
     description: string;
     cost: number;
+    items?: {
+        type: string;
+        description: string;
+        amount: number;
+    }[];
     car: { licensePlate: string, make: string | null, model: string | null, year: number | null, vin: string };
     owner: { name: string, dni: string | null } | null;
     performedBy: { name: string | null } | null;
 }
 
-// --- Componente principal del PDF ---
+const formatMoney = (n: number) =>
+    new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n);
+
 export const OtComprobantePdf = ({ data }: { data: PdfData }) => (
     <Document>
         <Page size="A4" style={styles.page}>
-
-            {/* LOGOTIPO DEL TALLER (USAMOS logoSrc como Data URL) */}
-            {data.logoSrc && (
-                <Image src={data.logoSrc} style={styles.logo} />
-            )}
-
-            <Text style={styles.header}>COMPROBANTE DE OT #{data.otNumber}</Text>
-
-            {/* ... (Secciones de Cliente y Vehículo sin cambios) ... */}
-
-            {/* Sección Cliente */}
-            <Text style={styles.subheader}>DATOS DEL CLIENTE</Text>
-            <View style={styles.dataRow}>
-                <Text style={styles.label}>Nombre:</Text>
-                <Text style={styles.value}>{data.owner?.name || 'N/A'}</Text>
-            </View>
-            <View style={styles.dataRow}>
-                <Text style={styles.label}>DNI/CUIT:</Text>
-                <Text style={styles.value}>{data.owner?.dni || 'N/A'}</Text>
+            <View style={styles.headerRow}>
+                {data.logoSrc ? (
+                    <Image src={data.logoSrc} style={styles.logo} />
+                ) : (
+                    <View style={styles.logo} />
+                )}
+                <View style={styles.headerRight}>
+                    <Text style={styles.title}>COMPROBANTE DE OT #{data.otNumber}</Text>
+                    <Text style={styles.headerMeta}>
+                        Emitido: {data.createdAt.toLocaleDateString('es-AR')}
+                    </Text>
+                    <Text style={styles.statusBadge}>{data.status.replace('_', ' ')}</Text>
+                </View>
             </View>
 
-            {/* Sección Vehículo */}
-            <Text style={styles.subheader}>DATOS DEL VEHÍCULO</Text>
-            <View style={styles.dataRow}>
-                <Text style={styles.label}>Matrícula:</Text>
-                <Text style={styles.value}>{data.car.licensePlate}</Text>
-            </View>
-            <View style={styles.dataRow}>
-                <Text style={styles.label}>Marca/Modelo:</Text>
-                <Text style={styles.value}>{data.car.make} {data.car.model} ({data.car.year})</Text>
-            </View>
-            <View style={styles.dataRow}>
-                <Text style={styles.label}>Km al Ingreso:</Text>
-                <Text style={styles.value}>{data.mileageKm.toLocaleString('es-AR')} KM</Text>
+            <View style={styles.columnsRow}>
+                <View style={styles.card}>
+                    <Text style={styles.cardTitle}>Datos del Cliente</Text>
+                    <View style={styles.dataRow}>
+                        <Text style={styles.label}>Nombre:</Text>
+                        <Text style={styles.value}>{data.owner?.name || 'N/A'}</Text>
+                    </View>
+                    <View style={styles.dataRow}>
+                        <Text style={styles.label}>DNI/CUIT:</Text>
+                        <Text style={styles.value}>{data.owner?.dni || 'N/A'}</Text>
+                    </View>
+                </View>
+
+                <View style={styles.card}>
+                    <Text style={styles.cardTitle}>Datos del Vehículo</Text>
+                    <View style={styles.dataRow}>
+                        <Text style={styles.label}>Matrícula:</Text>
+                        <Text style={styles.value}>{data.car.licensePlate}</Text>
+                    </View>
+                    <View style={styles.dataRow}>
+                        <Text style={styles.label}>Marca/Modelo:</Text>
+                        <Text style={styles.value}>{data.car.make} {data.car.model} ({data.car.year})</Text>
+                    </View>
+                    <View style={styles.dataRow}>
+                        <Text style={styles.label}>Km al Ingreso:</Text>
+                        <Text style={styles.value}>{data.mileageKm.toLocaleString('es-AR')} KM</Text>
+                    </View>
+                </View>
             </View>
 
-            {/* Sección Trabajo */}
-            <Text style={styles.subheader}>DIAGNOSTICO INICIAL</Text>
-            <View style={styles.description}>
-                <Text>{data.description}</Text>
+            <Text style={styles.sectionTitle}>Diagnóstico Inicial</Text>
+            <View style={styles.textBox}>
+                <Text style={styles.textBoxContent}>{data.description}</Text>
             </View>
 
-            {/* SECCIÓN DE SEGUIMIENTO/NOTAS DE TALLER (NUEVA) */}
             {data.notes && (
                 <>
-                    <Text style={styles.subheader}>TRABAJOS REALIZADOS</Text>
-                    <View style={styles.description}>
-                        <Text>{data.notes}</Text>
+                    <Text style={styles.sectionTitle}>Notas / Trabajos</Text>
+                    <View style={styles.textBox}>
+                        <Text style={styles.textBoxContent}>{data.notes}</Text>
                     </View>
                 </>
             )}
 
-            {/* Sección Costo y Metadata */}
-            <View style={{ marginTop: 20 }}>
+            {data.items && data.items.length > 0 && (
+                <>
+                    <Text style={styles.sectionTitle}>Detalle de ítems</Text>
+                    <View style={styles.tableHeader}>
+                        <Text style={[styles.colType, { fontFamily: 'Helvetica-Bold' }]}>Tipo</Text>
+                        <Text style={[styles.colDesc, { fontFamily: 'Helvetica-Bold' }]}>Descripción</Text>
+                        <Text style={[styles.colAmount, { fontFamily: 'Helvetica-Bold' }]}>Importe</Text>
+                    </View>
+                    {data.items.map((item, idx) => (
+                        <View key={idx} style={styles.tableRow}>
+                            <Text style={styles.colType}>{typeLabels[item.type] || item.type}</Text>
+                            <Text style={styles.colDesc}>{item.description}</Text>
+                            <Text style={styles.colAmount}>{formatMoney(item.amount)}</Text>
+                        </View>
+                    ))}
+                </>
+            )}
 
-                {/* Fila del Estado */}
-                <View style={styles.dataRow}>
-                    <Text style={styles.label}>Estado:</Text>
-                    <Text style={styles.value}>{data.status.replace('_', ' ')}</Text>
-                </View>
-
-                {/* Fila del Costo Total */}
-                <Text style={styles.costTotal}>
-                    COSTO TOTAL: {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(data.cost)}
-                </Text>
-
-                {/* TRAZABILIDAD / SEGUIMIENTO (NUEVA SECCIÓN) */}
-                <Text style={styles.metadata}>
-                    OT Registrada: {data.createdAt.toLocaleDateString('es-AR')} |
-                    Última Modificación: {data.updatedAt.toLocaleDateString('es-AR')}
-                </Text>
+            <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total OT:</Text>
+                <Text style={styles.totalValue}>{formatMoney(data.cost)}</Text>
             </View>
+
+            <Text style={styles.metadata}>
+                OT Registrada: {data.createdAt.toLocaleDateString('es-AR')} | Última Modificación: {data.updatedAt.toLocaleDateString('es-AR')}
+                {data.performedBy?.name ? ` | Mecánico: ${data.performedBy.name}` : ''}
+            </Text>
 
             <Text style={styles.footer} fixed>
                 Este documento no es una factura. Emitido para el cliente con fines informativos.

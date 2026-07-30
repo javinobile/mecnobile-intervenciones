@@ -22,13 +22,10 @@ export default async function DashboardLayout({
   }
 
   return (
-    <div className="flex h-screen">
-      {/* 1. Barra Lateral: Persistente y fija */}
+    <div className="flex h-screen bg-slate-50">
       <Sidebar />
 
-      {/* 2. Área de Contenido Principal */}
-      <main className="flex-grow p-4 lg:p-10 mt-8 lg:ml-64 bg-gray-50">
-        {/* El ml-64 sigue siendo necesario para compensar el ancho de la sidebar fija */}
+      <main className="flex-grow p-4 lg:p-6 mt-12 lg:mt-0 lg:ml-56 overflow-y-auto">
         {children}
       </main>
     </div>

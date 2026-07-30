@@ -5,7 +5,12 @@ import { authOptions } from "@/auth";
 import prisma from "../../lib/prisma";
 import { revalidatePath } from "next/cache";
 import { Car, Client, InterventionStatus } from "../../generated/prisma";
-import { normalizeLicensePlate } from "../../lib/utils";
+import { normalizeLicensePlate, validateNewLicensePlate } from "../../lib/utils";
+import {
+    findCarIdsByNormalizedPlateContains,
+    findCarIdByNormalizedPlateExact,
+    findCarIdByNormalizedPlateExactInTx,
+} from "../../lib/plate-search";
 
 // IMPORTACIÓN CLAVE: Función para normalizar matrículas
 
@@ -40,19 +45,15 @@ export async function getCarsForSearch(searchTerm: string): Promise<CarSearchRes
     const search = searchTerm.trim();
     if (search.length < 3) return [];
 
-    // NORMALIZACIÓN: Aplicamos la normalización al término de búsqueda para la patente
-    const normalizedSearch = normalizeLicensePlate(search);
-
     try {
-        // 1. OBTENER DATOS DE PRISMA con la relación anidada
+        const plateIds = await findCarIdsByNormalizedPlateContains(search, 20);
+
         const cars = await prisma.car.findMany({
             where: {
                 OR: [
-                    // USAR EL TÉRMINO NORMALIZADO para la búsqueda de la patente
-                    { licensePlate: { contains: normalizedSearch, mode: 'insensitive' } }, 
-                    // Para otros campos, se puede usar el término original
-                    { make: { contains: search, mode: 'insensitive' } },
-                    { model: { contains: search, mode: 'insensitive' } },
+                    ...(plateIds.length > 0 ? [{ id: { in: plateIds } }] : []),
+                    { make: { contains: search, mode: 'insensitive' as const } },
+                    { model: { contains: search, mode: 'insensitive' as const } },
                 ]
             },
             select: {
@@ -62,7 +63,7 @@ export async function getCarsForSearch(searchTerm: string): Promise<CarSearchRes
                 model: true,
                 ownershipHistory: {
                     where: {
-                        endDate: null, // Condición: El cliente es el dueño actual
+                        endDate: null,
                     },
                     select: {
                         client: {
@@ -78,7 +79,6 @@ export async function getCarsForSearch(searchTerm: string): Promise<CarSearchRes
             take: 10,
         });
 
-        // 2. Mapear los resultados
         return cars.map(car => {
             const currentOwner = car.ownershipHistory[0]?.client;
 
@@ -129,25 +129,24 @@ export interface CarsPageResult {
 export async function getCarsPage(page: number = 1, query: string = ''): Promise<CarsPageResult> {
 
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session || session.user.role !== 'ADMIN') {
         return { cars: [], totalPages: 0, currentPage: 1 };
     }
 
     const offset = (page - 1) * PAGE_SIZE;
     const search = query.trim();
 
-    // NORMALIZACIÓN: Aplicamos la normalización al query para la patente
-    const normalizedSearch = normalizeLicensePlate(search);
+    const plateIds = search.length > 0
+        ? await findCarIdsByNormalizedPlateContains(search, 200)
+        : [];
 
-    // Configuración del filtro de búsqueda
     const whereClause = search.length > 0 ? {
         OR: [
-            // USAR EL TÉRMINO NORMALIZADO para la búsqueda de la patente
-            { licensePlate: { contains: normalizedSearch, mode: 'insensitive' } },
-            { make: { contains: search, mode: 'insensitive' } },
-            { model: { contains: search, mode: 'insensitive' } },
+            ...(plateIds.length > 0 ? [{ id: { in: plateIds } }] : []),
+            { make: { contains: search, mode: 'insensitive' as const } },
+            { model: { contains: search, mode: 'insensitive' as const } },
         ]
-    } : {} as any;
+    } : {};
 
     try {
         // 1. OBTENER EL TOTAL DE REGISTROS para calcular totalPages
@@ -245,6 +244,11 @@ interface CreationResponse {
  */
 export async function createClientAndCar(data: NewCarFormData): Promise<CreationResponse> {
 
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.role !== 'ADMIN') {
+        return { success: false, message: 'Acceso denegado. El alta desde maestros es solo para administradores. Use la apertura de OT.' };
+    }
+
     // ... (Seguridad, Validación y Parseo de Cliente) ...
     const nameParts = data.ownerName.trim().split(/\s+/);
     const firstName = nameParts[0] || '';
@@ -255,12 +259,12 @@ export async function createClientAndCar(data: NewCarFormData): Promise<Creation
     const year = parseInt(data.year);
     const initialKm = parseInt(data.km);
 
-    // **********************************************
-    // * LÓGICA DE NORMALIZACIÓN ESTRICTA *
-    // **********************************************
-
-    // 1. Normalizar Matrícula: Reemplazar por la función reutilizable
-    const plate = normalizeLicensePlate(data.plate);
+    // 1. Validar patente nueva: sin guiones/espacios
+    const plateValidation = validateNewLicensePlate(data.plate);
+    if (!plateValidation.ok || !plateValidation.plate) {
+        return { success: false, message: plateValidation.message || 'Patente inválida.' };
+    }
+    const plate = plateValidation.plate;
 
     // 2. Normalizar VIN: Eliminar espacios y convertir a mayúsculas
     const vin = data.vin.trim().replace(/\s/g, '').toUpperCase();
@@ -316,20 +320,18 @@ export async function createClientAndCar(data: NewCarFormData): Promise<Creation
 
             // --- B. GESTIÓN DEL VEHÍCULO (VERIFICACIÓN DE DUPLICADOS) ---
 
-            // 1. Buscar el coche por Matrícula NORMALIZADA
-            car = await tx.car.findUnique({ where: { licensePlate: plate } });
-
-            // 2. Si no se encontró por Matrícula, buscar por VIN NORMALIZADO
-            if (!car) {
-                car = await tx.car.findUnique({ where: { vin: vin } });
-            }
+            // Match por patente normalizada (FAM-250 ≡ FAM250) o VIN
+            const existingByPlateId = await findCarIdByNormalizedPlateExactInTx(tx, plate);
+            car = existingByPlateId
+                ? await tx.car.findUnique({ where: { id: existingByPlateId } })
+                : await tx.car.findUnique({ where: { vin } });
 
             // 3. EVITAR DUPLICADO: Si el coche ya existe, abortar
             if (car) {
-                // Identificamos el campo en conflicto para un mensaje claro
-                const conflictField = car.licensePlate === plate ? `matrícula ${plate}` : `VIN ${vin}`;
+                const conflictField = normalizeLicensePlate(car.licensePlate) === plate
+                    ? `matrícula ${car.licensePlate}`
+                    : `VIN ${vin}`;
 
-                // Chequeamos si es un intento de registrar el mismo coche y el mismo dueño
                 const isSameOwner = await tx.carOwnership.findFirst({
                     where: {
                         carId: car.id,
@@ -339,10 +341,8 @@ export async function createClientAndCar(data: NewCarFormData): Promise<Creation
                 });
 
                 if (isSameOwner) {
-                    // El coche ya existe y el dueño es el mismo (notificación)
                     throw new Error(`Error: El vehículo con ${conflictField} ya está registrado a nombre de este cliente.`);
                 } else {
-                    // El coche existe pero el dueño es diferente (duplicado REAL)
                     throw new Error(`Error: El identificador ${conflictField} ya está registrado a nombre de otro cliente. Por favor, revise los datos.`);
                 }
             }
@@ -419,14 +419,25 @@ export async function updateCar(carId: string, data: UpdateCarData): Promise<{ s
         return { success: false, message: 'Acceso denegado. Se requiere ser personal del taller.' };
     }
 
+    const { canEditMasterRecord } = await import('@/lib/auth-guards');
+    if (!(await canEditMasterRecord(session.user.role, { carId }))) {
+        return { success: false, message: 'Solo se puede editar el vehículo mientras tenga una OT abierta, o siendo administrador.' };
+    }
+
     let updateData: any = { ...data };
 
-    // 1. NORMALIZAR LA PATENTE SI SE ESTÁ ACTUALIZANDO
     if (data.licensePlate) {
-        updateData.licensePlate = normalizeLicensePlate(data.licensePlate);
+        const plateValidation = validateNewLicensePlate(data.licensePlate);
+        if (!plateValidation.ok || !plateValidation.plate) {
+            return { success: false, message: plateValidation.message || 'Patente inválida.' };
+        }
+        const existingId = await findCarIdByNormalizedPlateExact(plateValidation.plate);
+        if (existingId && existingId !== carId) {
+            return { success: false, message: 'Error: La matrícula ya existe en otro vehículo.' };
+        }
+        updateData.licensePlate = plateValidation.plate;
     }
     
-    // 2. Normalizar VIN si existe
     if (data.vin) {
         updateData.vin = data.vin.toUpperCase().replace(/\s/g, '');
     }
@@ -605,7 +616,7 @@ export interface ClientsPageResult {
 export async function getClientsPage(page: number = 1, query: string = ''): Promise<ClientsPageResult> {
 
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session || session.user.role !== 'ADMIN') {
         return { clients: [], totalPages: 0, currentPage: 1 };
     }
 

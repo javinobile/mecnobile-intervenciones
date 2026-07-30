@@ -5,6 +5,9 @@ import { getClientsPage } from '@/actions/client.actions';
 import SearchForm from '@/components/clients/SearchForm';
 import ClientsTable from '@/components/clients/ClientsTable';
 import PaginationLink from '@/components/clients/PaginationLink';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/auth';
+import { redirect } from 'next/navigation';
 
 interface ClientsPageProps {
     searchParams: {
@@ -15,6 +18,10 @@ interface ClientsPageProps {
 
 // Convertimos la función en ASÍNCRONA
 export default async function ClientsPage({ searchParams }: ClientsPageProps) {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.role !== 'ADMIN') {
+        redirect('/dashboard');
+    }
 
     const search = await searchParams;
 
@@ -30,55 +37,52 @@ export default async function ClientsPage({ searchParams }: ClientsPageProps) {
     return (
         <>
 
-            <h1 className="text-4xl font-extrabold text-gray-900 mb-2 flex items-center">
-                <User className="w-8 h-8 mr-3 text-blue-600" />
-                Gestión de Clientes (Propietarios)
+            <h1 className="text-2xl font-bold text-gray-900 mb-1 flex items-center">
+                <User className="w-6 h-6 mr-2 text-blue-600" />
+                Gestión de Clientes
             </h1>
-            <p className="text-gray-500 mb-8">
-                Listado y búsqueda de todos los propietarios registrados.
+            <p className="text-sm text-gray-500 mb-4">
+                Listado y búsqueda de propietarios registrados.
             </p>
 
-            {/* Barra de Herramientas: Búsqueda y Botón Añadir (Opcional, se crean al registrar coche) */}
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center mb-4 gap-3">
                 <SearchForm initialQuery={query} />
 
-                {/* Botón para registrar un nuevo coche (que registra un cliente) */}
-                <Link href="/dashboard/cars/new" legacyBehavior>
-                    <a className="flex items-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg shadow-md hover:bg-green-700 transition duration-150">
-                        <PlusCircle className="w-5 h-5 mr-2" />
-                        Nuevo Cliente (vía Coche)
-                    </a>
+                <Link
+                    href="/dashboard/cars/new"
+                    className="flex items-center px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-green-700 transition duration-150 shrink-0"
+                >
+                    <PlusCircle className="w-4 h-4 mr-1.5" />
+                    Nuevo Cliente (vía Coche)
                 </Link>
             </div>
 
-            {/* Tabla de Listado de Clientes */}
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                 <ClientsTable clients={clients} />
 
-                {/* Paginación */}
                 {totalPages > 1 && (
-                    <div className="flex justify-between items-center pt-4 border-t border-gray-200 mt-6">
+                    <div className="flex justify-between items-center pt-3 border-t border-gray-200 mt-4">
                         <p className="text-sm text-gray-700">Página {currentPage} de {totalPages}</p>
-                        <div className="flex space-x-3">
+                        <div className="flex space-x-2">
                             <PaginationLink
                                 page={currentPage - 1}
                                 disabled={isFirstPage}
                                 query={query}
                                 label="Anterior"
-                                iconType="left" // <-- PASA UNA CADENA DE TEXTO SIMPLE
+                                iconType="left"
                             />
                             <PaginationLink
                                 page={currentPage + 1}
                                 disabled={isLastPage}
                                 query={query}
                                 label="Siguiente"
-                                iconType="right" // <-- PASA UNA CADENA DE TEXTO SIMPLE
+                                iconType="right"
                             />
                         </div>
                     </div>
                 )}
                 {clients.length === 0 && (
-                    <div className="text-center py-10 text-gray-500">
+                    <div className="text-center py-8 text-sm text-gray-500">
                         No se encontraron clientes que coincidan con la búsqueda.
                     </div>
                 )}

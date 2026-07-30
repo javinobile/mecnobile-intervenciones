@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: Root.1234
       POSTGRES_DB: mecnobile-db
     ports:
-      # Mapea el puerto del contenedor (5432) al host (5432)
+      # Mapea el puerto del contenedor (5432) al puerto del host (5432)
       - "5432:5432"
     volumes:
       # Persistencia de datos: almacena los datos en un volumen para que persistan
@@ -38,14 +38,14 @@ services:
       DATABASE_URL: postgresql://root:Root.1234@db:5432/mecnobile-db?schema=public
       AUTH_SECRET: KM2MEfNVxgH0NYXdBG0Q2FY0/dOf3aPKHygkO3NjOx0=
       NEXTAUTH_URL: https://sistema.mecnobile.com.ar
-    
+
     # Asegura que la BD esté levantada antes de que inicie la app
     depends_on:
       - db
-    
+
     # Mapea el código local al contenedor para desarrollo (opcional)
     # Si quieres usar Docker solo para producción, puedes comentar esta línea
-    # volumes: 
+    # volumes:
     #   - .:/app
     #   - /app/node_modules # Evita sobreescribir node_modules del contenedor con el host
 

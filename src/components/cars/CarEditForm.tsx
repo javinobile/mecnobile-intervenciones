@@ -34,9 +34,13 @@ export default function CarEditForm({ car }: { car: CarDetails }) {
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
+        let next = value;
+        if (name === 'licensePlate') {
+            next = value.replace(/[-\s]/g, '').toUpperCase();
+        }
         setFormData(prev => ({ 
             ...prev, 
-            [name]: name === 'year' || name === 'initialKm' ? parseInt(value || '0') : value 
+            [name]: name === 'year' || name === 'initialKm' ? parseInt(next || '0') : next 
         }));
     };
 
@@ -102,8 +106,8 @@ export default function CarEditForm({ car }: { car: CarDetails }) {
                     {/* Fila 1: Matrícula y VIN */}
                     <div className="grid grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700">Matrícula</label>
-                            <input name="licensePlate" value={formData.licensePlate} onChange={handleChange} required className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                            <label className="block text-sm font-medium text-gray-700">Matrícula (sin guiones)</label>
+                            <input name="licensePlate" value={formData.licensePlate} onChange={handleChange} required placeholder="AA123BB" className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700">VIN (Chasis)</label>

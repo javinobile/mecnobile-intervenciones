@@ -88,7 +88,12 @@ export default function NewCarPage() {
             2. Datos del Automóvil
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <InputField label="Matrícula/Placa" value={plate} onChange={setPlate} required />
+            <InputField
+              label="Matrícula/Placa"
+              value={plate}
+              onChange={(v: string) => setPlate(v.replace(/[-\s]/g, '').toUpperCase())}
+              required
+            />
             <InputField label="VIN (N° de Chasis)" value={vin} onChange={setVin} required /> {/* ¡NUEVO CAMPO VIN! */}
             <InputField label="Marca" value={make} onChange={setMake} required />
             <InputField label="Modelo" value={model} onChange={setModel} required />
@@ -97,7 +102,7 @@ export default function NewCarPage() {
             <InputField label="Kilometraje Inicial (KM)" value={km} onChange={setKm} type="number" required />
           </div>
           <p className="text-sm text-gray-500 mt-2">
-            *El sistema chequeará la unicidad del vehículo por **Matrícula** y **VIN**.
+            *Patente sin guiones (ej. AA123BB). El sistema chequeará unicidad por matrícula y VIN.
           </p>
         </section>
 

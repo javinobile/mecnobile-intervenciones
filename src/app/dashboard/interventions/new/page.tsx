@@ -1,22 +1,16 @@
-// app/(dashboard)/interventions/new/page.tsx
-
 import NewInterventionForm from '@/components/interventions/NewInterventionForm';
 import { Wrench } from 'lucide-react';
-// Asegúrate que la ruta de importación sea correcta si moviste el archivo:
 
-// Esta es una página de Servidor, aunque solo renderiza el componente de Cliente.
 export default function NewInterventionPage() {
     return (
         <>
-            <h1 className="text-4xl font-extrabold text-gray-900 mb-2 flex items-center">
-                <Wrench className="w-8 h-8 mr-3 text-blue-600" />
-                Abrir Nueva Orden de Trabajo (OT)
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-gray-900 mb-1 flex items-center">
+                <Wrench className="w-7 h-7 mr-2 text-blue-600 shrink-0" />
+                Abrir Nueva OT
             </h1>
-            <p className="text-gray-500 mb-8">
-                Selecciona el vehículo e ingresa el detalle de la intervención a realizar.
+            <p className="text-sm text-gray-500 mb-6">
+                Busque por vehículo o propietario. Si no existe, podrá darlo de alta en el mismo flujo.
             </p>
-
-            {/* Renderizamos el formulario que contiene toda la lógica de estado */}
             <NewInterventionForm />
         </>
     );

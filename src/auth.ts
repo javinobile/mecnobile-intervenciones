@@ -115,5 +115,5 @@ export const authOptions: AuthOptions = {
   },
 
   // 6. Configuración de seguridad
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET ?? process.env.AUTH_SECRET,
 };

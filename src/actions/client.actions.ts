@@ -32,7 +32,7 @@ export interface ClientsPageResult {
 export async function getClientsPage(page: number = 1, query: string = ''): Promise<ClientsPageResult> {
 
     const session = await getServerSession(authOptions);
-    if (!session) {
+    if (!session || session.user.role !== 'ADMIN') {
         return { clients: [], totalPages: 0, currentPage: 1 };
     }
 
@@ -273,6 +273,11 @@ export async function updateClient(data: UpdateClientData): Promise<{ success: b
         return { success: false, message: 'Acceso denegado. Se requiere ser personal del taller.' };
     }
 
+    const { canEditMasterRecord } = await import('@/lib/auth-guards');
+    if (!(await canEditMasterRecord(session.user.role, { clientId: data.clientId }))) {
+        return { success: false, message: 'Solo se puede editar el propietario mientras tenga una OT abierta, o siendo administrador.' };
+    }
+
     // Normalización de datos
     const dni = data.dni.trim();
     const phone = data.phone.trim();
@@ -345,17 +350,35 @@ export interface UpdateCarData {
 export async function updateCar(carId: string, data: UpdateCarData): Promise<{ success: boolean, message: string }> {
 
     const session = await getServerSession(authOptions);
-    // Asumimos que sólo un ADMIN o MECHANIC puede editar datos del vehículo
     if (!session || (session.user.role !== 'ADMIN' && session.user.role !== 'MECHANIC')) {
         return { success: false, message: 'Acceso denegado. Se requiere ser personal del taller.' };
     }
 
+    const { canEditMasterRecord } = await import('@/lib/auth-guards');
+    if (!(await canEditMasterRecord(session.user.role, { carId }))) {
+        return { success: false, message: 'Solo se puede editar el vehículo mientras tenga una OT abierta, o siendo administrador.' };
+    }
+
     try {
+        const dataToSave = { ...data };
+        if (data.licensePlate) {
+            const { validateNewLicensePlate } = await import('../../lib/utils');
+            const { findCarIdByNormalizedPlateExact } = await import('../../lib/plate-search');
+            const plateValidation = validateNewLicensePlate(data.licensePlate);
+            if (!plateValidation.ok || !plateValidation.plate) {
+                return { success: false, message: plateValidation.message || 'Patente inválida.' };
+            }
+            const existingId = await findCarIdByNormalizedPlateExact(plateValidation.plate);
+            if (existingId && existingId !== carId) {
+                return { success: false, message: 'Error: La matrícula ya existe en otro vehículo.' };
+            }
+            dataToSave.licensePlate = plateValidation.plate;
+        }
+
         await prisma.car.update({
             where: { id: carId },
             data: {
-                // Mapeo simple de datos. Prisma maneja la validación de tipos
-                licensePlate: data.licensePlate,
+                licensePlate: dataToSave.licensePlate,
                 vin: data.vin,
                 engineNumber: data.engineNumber,
                 color: data.color,
@@ -363,18 +386,15 @@ export async function updateCar(carId: string, data: UpdateCarData): Promise<{ s
                 model: data.model,
                 year: data.year,
                 initialKm: data.initialKm,
-                // Nota: Los campos únicos (licensePlate, vin) serán validados por la DB.
             }
         });
 
-        // Revalidar la caché de la página de detalle del coche
         revalidatePath(`/dashboard/cars/${carId}`);
 
-        return { success: true, message: `Vehículo ${data.licensePlate || carId} actualizado con éxito.` };
+        return { success: true, message: `Vehículo ${dataToSave.licensePlate || carId} actualizado con éxito.` };
 
     } catch (error: any) {
         console.error("Error al actualizar el vehículo:", error);
-        // Manejo de error específico para campos únicos (ej: matrícula duplicada)
         if (error.code === 'P2002') {
             return { success: false, message: 'Error: La matrícula o VIN ya existe en otro vehículo.' };
         }

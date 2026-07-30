@@ -8,10 +8,6 @@ const nextConfig: NextConfig = {
       allowedOrigins: ['*']
     }
   },
-  eslint: {
-    // Deshabilita el linting durante el build
-    ignoreDuringBuilds: true,
-  },
   typescript: {
     // Deshabilita la verificación de tipos durante el build
     ignoreBuildErrors: true,

@@ -21,18 +21,19 @@ enum Role {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  name          String?
-  email         String         @unique
-  emailVerified DateTime?
-  image         String?
-  role          Role           @default(MECHANIC)
-  accounts      Account[]
-  sessions      Session[]
-  interventions Intervention[]
-  passwordHash  String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id               String         @id @default(cuid())
+  name             String?
+  email            String         @unique
+  emailVerified    DateTime?
+  image            String?
+  role             Role           @default(MECHANIC)
+  accounts         Account[]
+  sessions         Session[]
+  interventions    Intervention[] @relation("PerformedBy")
+  cancelRequests   Intervention[] @relation("CancelRequestedBy")
+  passwordHash     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
 }
 
 model Account {
@@ -80,15 +81,16 @@ model Client {
   firstName        String
   lastName         String
   phone            String?
-  email            String?        @unique // No siempre tendrán email, pero si lo tienen, es único.
+  email            String?        @unique
   dni              String         @unique
   address          String?
-  // Relación con la propiedad del coche (el 'dueño actual' y los pasados)
   ownedCarsHistory CarOwnership[]
+  interventions    Intervention[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  @@unique([firstName, lastName, phone]) // Podría ser una buena clave de unicidad compuesta
+  // Sin única por nombre+teléfono: el padrón legacy trae homónimos.
+  // La identidad real del cliente es el DNI.
 }
 
 model Car {
@@ -103,7 +105,6 @@ model Car {
   initialKm    Int
   unlockCodes  Json?
 
-  // Relaciones: SOLO MANTENEMOS EL HISTORIAL DE PROPIEDAD
   ownershipHistory CarOwnership[]
   interventions    Intervention[]
 
@@ -115,52 +116,88 @@ model CarOwnership {
   id        String    @id @default(uuid())
   carId     String
   clientId  String
-  startDate DateTime // Fecha en que el cliente se hizo dueño
-  endDate   DateTime? // Fecha en que dejó de ser dueño (null si es el dueño actual)
+  startDate DateTime
+  endDate   DateTime?
 
-  // Relaciones
   car    Car    @relation(fields: [carId], references: [id], onDelete: Cascade)
   client Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
-  // Agregamos un índice para búsquedas rápidas
   @@index([carId])
   @@index([clientId])
 }
 
-// Definición para el estado del pago o la intervención si fuera necesario, aunque por ahora solo registramos.
 enum InterventionStatus {
   CERRADA
   ABIERTA
   CANCELADA
 }
 
+enum InterventionItemType {
+  REPUESTO
+  MANO_DE_OBRA
+  TRABAJO_TERCERO
+}
+
 model Intervention {
   id String @id @default(uuid())
 
   otNumber    Int
-  // Datos del Trabajo
   description String
-  notes       String? // Para detalles adicionales o internos
-  cost        Decimal @default(0.00) @db.Decimal(10, 2) // Costo total del trabajo
+  notes       String?
+  cost        Decimal @default(0.00) @db.Decimal(10, 2)
 
-  // Estado y Fechas
   status             InterventionStatus @default(ABIERTA)
   dateOfIntervention DateTime           @default(now())
 
-  // Conexión con el Coche
   carId String
   car   Car    @relation(fields: [carId], references: [id], onDelete: Restrict)
 
-  // Conexión con el Mecánico/Usuario que realizó la Intervención
-  performedById String
-  performedBy   User   @relation(fields: [performedById], references: [id], onDelete: Restrict) // Asumiendo que el User es quien registra el trabajo.
+  // Snapshot del dueño asociado a esta OT (no cambia si luego se transfiere el auto)
+  clientId String
+  client   Client @relation(fields: [clientId], references: [id], onDelete: Restrict)
 
-  // Datos Adicionales al momento de la intervención
-  mileageKm Int // Kilometraje del coche al momento de la intervención
+  performedById String
+  performedBy   User   @relation("PerformedBy", fields: [performedById], references: [id], onDelete: Restrict)
+
+  // Solicitud de cancelación (el estado sigue ABIERTA hasta que el ADMIN confirme)
+  cancelRequestedAt   DateTime?
+  cancelRequestedById String?
+  cancelRequestedBy   User?     @relation("CancelRequestedBy", fields: [cancelRequestedById], references: [id], onDelete: SetNull)
+
+  mileageKm Int
+
+  items InterventionItem[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([carId])
+  @@index([clientId])
   @@index([performedById])
+  @@index([cancelRequestedById])
+}
+
+model InterventionItem {
+  id             String               @id @default(uuid())
+  interventionId String
+  intervention   Intervention         @relation(fields: [interventionId], references: [id], onDelete: Cascade)
+  type           InterventionItemType
+  description    String
+  hours          Decimal?             @db.Decimal(8, 2)
+  unitPrice      Decimal              @db.Decimal(10, 2)
+  amount         Decimal              @db.Decimal(10, 2)
+  sortOrder      Int                  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([interventionId])
+}
+
+/// Singleton de configuración del taller (id fijo "default")
+model WorkshopSettings {
+  id         String   @id @default("default")
+  hourlyRate Decimal  @default(0.00) @db.Decimal(10, 2)
+  updatedAt  DateTime @updatedAt
+  createdAt  DateTime @default(now())
 }

@@ -32,6 +32,13 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+deploy.env
+!.env*.example
+!deploy.env.example
+
+# deploy leftovers
+.deploy-ssh.sock
+/backup-*.dump
 
 # vercel
 .vercel

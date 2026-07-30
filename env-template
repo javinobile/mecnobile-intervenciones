@@ -1,2 +1,13 @@
+# Copiar a .env.local para desarrollo local (next dev / Prisma CLI).
+# Producción NO usa este archivo: las vars se inyectan en docker-compose.
+# El deploy usa PROD_DATABASE_URL (ver build-and-push.sh).
+
+# Postgres local (mismo usuario/DB que docker-compose service db)
+DATABASE_URL="postgresql://root:Root.1234@localhost:5432/mecnobile-db?schema=public"
+
+# URL pública de la app en este entorno
+NEXTAUTH_URL="http://localhost:3000"
+
+# Secret de NextAuth. Usar el mismo valor en ambas (auth.ts acepta cualquiera).
 AUTH_SECRET=
-DATABASE_URL=
+NEXTAUTH_SECRET=

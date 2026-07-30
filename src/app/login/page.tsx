@@ -32,18 +32,17 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 p-4">
-      <div className="w-full max-w-md bg-white p-8 rounded-lg shadow-2xl border border-gray-100">
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+      <div className="w-full max-w-sm bg-white p-6 rounded-lg shadow-sm border border-gray-200">
 
-        <h2 className="text-3xl font-bold text-center text-gray-900 mb-6">
-          ⚙️ Nóbile, Tecnología y servicios - Ingreso
+        <h2 className="text-xl font-bold text-center text-gray-900 mb-1">
+          Nóbile
         </h2>
-        <p className="text-center text-gray-500 mb-8">
-          Accede al panel de gestión de intervenciones.
+        <p className="text-center text-sm text-gray-500 mb-5">
+          Acceso al panel de intervenciones
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Campo Email */}
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="email" className="block text-sm font-medium text-gray-700">
               Email
@@ -54,11 +53,10 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out"
+              className="mt-1 block w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out"
             />
           </div>
 
-          {/* Campo Contraseña */}
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-700">
               Contraseña
@@ -69,18 +67,16 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="mt-1 block w-full px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out"
+              className="mt-1 block w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 ease-in-out"
             />
           </div>
 
-          {/* Mensaje de Error */}
           {error && (
-            <div className="p-3 text-sm font-medium text-red-700 bg-red-100 border border-red-300 rounded-md">
+            <div className="p-2.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md">
               {error}
             </div>
           )}
 
-          {/* Botón de Login */}
           <div>
             <button
               type="submit"

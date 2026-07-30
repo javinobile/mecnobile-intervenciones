@@ -3,7 +3,10 @@
 
 import { getCarsPage } from '@/actions/car.actions';
 import CarTableInteraction from '@/components/cars/CarTableInteraction';
-import { PlusCircle, Car } from 'lucide-react'; 
+import { Car } from 'lucide-react';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/auth';
+import { redirect } from 'next/navigation';
 
 interface CarsPageProps {
     searchParams: {
@@ -14,6 +17,10 @@ interface CarsPageProps {
 
 // Función ASÍNCRONA
 export default async function CarsPage({ searchParams }: CarsPageProps) {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.role !== 'ADMIN') {
+        redirect('/dashboard');
+    }
 
     const resolved = await searchParams;
     
@@ -26,15 +33,14 @@ export default async function CarsPage({ searchParams }: CarsPageProps) {
     return (
         <>
             
-            <h1 className="text-4xl font-extrabold text-gray-900 mb-2 flex items-center">
-                <Car className="w-8 h-8 mr-3 text-blue-600" />
+            <h1 className="text-2xl font-bold text-gray-900 mb-1 flex items-center">
+                <Car className="w-6 h-6 mr-2 text-blue-600" />
                 Gestión de Automóviles
             </h1>
-            <p className="text-gray-500 mb-8">
+            <p className="text-sm text-gray-500 mb-4">
                 Registro y búsqueda de vehículos del taller.
             </p>
 
-            {/* Renderiza el componente de cliente, pasándole los datos del servidor */}
             <CarTableInteraction 
                 cars={cars}
                 totalPages={totalPages}

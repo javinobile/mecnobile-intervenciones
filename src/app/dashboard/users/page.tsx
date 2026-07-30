@@ -38,21 +38,20 @@ export default async function UsersPage({ searchParams }: UsersPageProps) {
 
     return (
         <>
-            <div className="flex justify-between items-center mb-6 border-b pb-4">
-                <h1 className="text-4xl font-extrabold text-gray-900 flex items-center">
-                    <Users className="w-8 h-8 mr-3 text-red-600" />
+            <div className="flex justify-between items-center mb-4 border-b border-gray-200 pb-3">
+                <h1 className="text-2xl font-bold text-gray-900 flex items-center">
+                    <Users className="w-6 h-6 mr-2 text-red-600" />
                     Gestión de Usuarios
                 </h1>
-                {/* Aquí podría ir un botón para crear un nuevo usuario si lo tienes */}
             </div>
 
-            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
                 <UserTable 
                     users={users} 
                     totalPages={totalPages} 
                     currentPage={actualPage} 
                     query={query}
-                    currentUserId={session.user.id} // Necesario para evitar que el Admin se modifique a sí mismo
+                    currentUserId={session.user.id}
                 />
             </div>
         </>
