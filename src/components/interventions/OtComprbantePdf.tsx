@@ -17,25 +17,30 @@ const styles = StyleSheet.create({
         color: TEXT,
         fontSize: 9,
     },
-    headerRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingBottom: 8,
+    header: {
+        paddingBottom: 10,
         borderBottomWidth: 2,
         borderBottomColor: BRAND,
         marginBottom: 12,
     },
     logo: {
-        width: 90,
-        height: 45,
+        // logo-taller.png es ~788×85 (~9.3:1)
+        width: 300,
+        height: 32,
         objectFit: 'contain',
+        marginBottom: 8,
     },
-    headerRight: {
+    headerRow: {
+        flexDirection: 'row',
         alignItems: 'flex-end',
+        justifyContent: 'space-between',
+    },
+    headerLeft: {
+        flex: 1,
+        paddingRight: 8,
     },
     title: {
-        fontSize: 16,
+        fontSize: 15,
         color: BRAND,
         fontFamily: 'Helvetica-Bold',
     },
@@ -49,9 +54,8 @@ const styles = StyleSheet.create({
         color: BRAND,
         backgroundColor: BRAND_SOFT,
         borderRadius: 3,
-        paddingVertical: 2,
-        paddingHorizontal: 6,
-        marginTop: 4,
+        paddingVertical: 3,
+        paddingHorizontal: 7,
         fontFamily: 'Helvetica-Bold',
     },
     columnsRow: {
@@ -195,17 +199,19 @@ const formatMoney = (n: number) =>
 export const OtComprobantePdf = ({ data }: { data: PdfData }) => (
     <Document>
         <Page size="A4" style={styles.page}>
-            <View style={styles.headerRow}>
+            <View style={styles.header}>
                 {data.logoSrc ? (
                     <Image src={data.logoSrc} style={styles.logo} />
                 ) : (
                     <View style={styles.logo} />
                 )}
-                <View style={styles.headerRight}>
-                    <Text style={styles.title}>COMPROBANTE DE OT #{data.otNumber}</Text>
-                    <Text style={styles.headerMeta}>
-                        Emitido: {data.createdAt.toLocaleDateString('es-AR')}
-                    </Text>
+                <View style={styles.headerRow}>
+                    <View style={styles.headerLeft}>
+                        <Text style={styles.title}>COMPROBANTE DE OT #{data.otNumber}</Text>
+                        <Text style={styles.headerMeta}>
+                            Emitido: {data.createdAt.toLocaleDateString('es-AR')}
+                        </Text>
+                    </View>
                     <Text style={styles.statusBadge}>{data.status.replace('_', ' ')}</Text>
                 </View>
             </View>

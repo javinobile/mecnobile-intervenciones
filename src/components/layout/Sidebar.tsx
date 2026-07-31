@@ -89,8 +89,14 @@ export default function Sidebar() {
           lg:translate-x-0 lg:flex
         `}
       >
-        <div className="px-3 py-3 text-lg font-bold border-b border-gray-700 tracking-tight">
-          Nóbile
+        <div className="border-b border-gray-700 bg-black px-4 py-2.5 flex justify-center">
+          <img
+            src="/images/logo-fondo-negro.png"
+            alt="Nóbile - Tecnología y Servicios del Automotor"
+            width={615}
+            height={220}
+            className="w-[85%] h-auto block aspect-[615/220] object-contain"
+          />
         </div>
 
         <div className="px-3 py-2.5 border-b border-gray-700">

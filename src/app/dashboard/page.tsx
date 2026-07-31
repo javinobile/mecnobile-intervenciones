@@ -26,19 +26,22 @@ async function getDashboardData() {
     }
 
     try {
+        const isAdmin = session.user.role === 'ADMIN';
+        const ownershipFilter = isAdmin ? {} : { performedById: session.user.id };
+
         // 2. Obtener las métricas clave
         const [totalCars, totalClients, openInterventions, lastInterventions] = await prisma.$transaction([
             // Cantidad de Automóviles registrados
             prisma.car.count(),
             // Cantidad de Clientes registrados
             prisma.client.count(),
-            // Cantidad de OTs que siguen en curso
+            // Cantidad de OTs que siguen en curso (mecánico: solo las suyas)
             prisma.intervention.count({
-                where: { status: 'ABIERTA' },
+                where: { status: 'ABIERTA', ...ownershipFilter },
             }),
             // Las 5 OTs abiertas más recientes: panorama actual del taller
             prisma.intervention.findMany({
-                where: { status: 'ABIERTA' },
+                where: { status: 'ABIERTA', ...ownershipFilter },
                 take: 5,
                 orderBy: { dateOfIntervention: 'desc' },
                 select: {

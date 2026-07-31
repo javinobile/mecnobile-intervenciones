@@ -151,6 +151,8 @@ export async function getInterventionsPage(
             ? { AND: terms.map((term, idx) => buildTermFilter(term, plateIdsByTerm[idx] || [])) }
             : {}),
         ...statusClause,
+        // Mecánico/viewer: solo sus OT. Admin: todas.
+        ...(!isAdmin ? { performedById: session.user.id } : {}),
     };
 
     try {
@@ -643,6 +645,10 @@ export async function getInterventionDetail(id: string) {
         if (!intervention) return null;
 
         const isAdmin = session.user.role === 'ADMIN';
+        if (!isAdmin && intervention.performedById !== session.user.id) {
+            return null;
+        }
+
         const cancelRequested = intervention.cancelRequestedAt != null;
         const isCancelled = intervention.status === 'CANCELADA';
         const isClosed = intervention.status === 'CERRADA';
@@ -736,8 +742,12 @@ interface UpdateInterventionData {
 
 function canMutateOt(
     role: string,
-    ot: { status: InterventionStatus; cancelRequestedAt: Date | null }
+    userId: string,
+    ot: { status: InterventionStatus; cancelRequestedAt: Date | null; performedById: string }
 ): { ok: true } | { ok: false; message: string } {
+    if (role !== 'ADMIN' && ot.performedById !== userId) {
+        return { ok: false, message: 'No tenés permiso sobre esta OT.' };
+    }
     if (ot.status === 'CANCELADA') {
         return { ok: false, message: 'Una OT cancelada no se puede modificar ni reabrir.' };
     }
@@ -770,7 +780,7 @@ export async function updateIntervention(data: UpdateInterventionData): Promise<
             return { success: false, message: 'OT no encontrada.' };
         }
 
-        const allowed = canMutateOt(session.user.role, existing);
+        const allowed = canMutateOt(session.user.role, session.user.id, existing);
         if (!allowed.ok) return { success: false, message: allowed.message };
 
         const updateData: Prisma.InterventionUpdateInput = {};
@@ -827,6 +837,9 @@ export async function closeIntervention(id: string): Promise<{ success: boolean;
     try {
         const ot = await prisma.intervention.findUnique({ where: { id } });
         if (!ot) return { success: false, message: 'OT no encontrada.' };
+        if (session.user.role !== 'ADMIN' && ot.performedById !== session.user.id) {
+            return { success: false, message: 'No tenés permiso sobre esta OT.' };
+        }
         if (ot.status !== 'ABIERTA' || ot.cancelRequestedAt) {
             return { success: false, message: 'Solo se pueden cerrar órdenes abiertas sin cancelación pendiente.' };
         }
@@ -855,6 +868,9 @@ export async function requestCancelIntervention(id: string): Promise<{ success: 
     try {
         const ot = await prisma.intervention.findUnique({ where: { id } });
         if (!ot) return { success: false, message: 'OT no encontrada.' };
+        if (session.user.role !== 'ADMIN' && ot.performedById !== session.user.id) {
+            return { success: false, message: 'No tenés permiso sobre esta OT.' };
+        }
         if (ot.status !== 'ABIERTA') {
             return { success: false, message: 'Solo se puede solicitar cancelación de una OT abierta.' };
         }
@@ -974,14 +990,14 @@ async function recalculateOtCost(tx: Prisma.TransactionClient, interventionId: s
     return total;
 }
 
-async function assertOtEditableForItems(interventionId: string, role: string) {
+async function assertOtEditableForItems(interventionId: string, role: string, userId: string) {
     const ot = await prisma.intervention.findUnique({
         where: { id: interventionId },
-        select: { status: true, cancelRequestedAt: true },
+        select: { status: true, cancelRequestedAt: true, performedById: true },
     });
     if (!ot) return { ok: false as const, message: 'OT no encontrada.' };
 
-    const allowed = canMutateOt(role, ot);
+    const allowed = canMutateOt(role, userId, ot);
     if (!allowed.ok) return { ok: false as const, message: allowed.message };
 
     return { ok: true as const };
@@ -1006,7 +1022,7 @@ export async function upsertInterventionItem(data: UpsertItemData): Promise<{
         return { success: false, message: 'Acceso denegado.' };
     }
 
-    const openCheck = await assertOtEditableForItems(data.interventionId, session.user.role);
+    const openCheck = await assertOtEditableForItems(data.interventionId, session.user.role, session.user.id);
     if (!openCheck.ok) return { success: false, message: openCheck.message };
 
     const validTypes: InterventionItemType[] = ['REPUESTO', 'MANO_DE_OBRA', 'TRABAJO_TERCERO'];
@@ -1108,7 +1124,7 @@ export async function deleteInterventionItem(itemId: string, interventionId: str
         return { success: false, message: 'Acceso denegado.' };
     }
 
-    const openCheck = await assertOtEditableForItems(interventionId, session.user.role);
+    const openCheck = await assertOtEditableForItems(interventionId, session.user.role, session.user.id);
     if (!openCheck.ok) return { success: false, message: openCheck.message };
 
     try {
@@ -1216,7 +1232,7 @@ export async function updateOtCar(
 
     const ot = await prisma.intervention.findUnique({ where: { id: interventionId } });
     if (!ot) return { success: false, message: 'OT no encontrada.' };
-    const allowed = canMutateOt(session.user.role, ot);
+    const allowed = canMutateOt(session.user.role, session.user.id, ot);
     if (!allowed.ok) return { success: false, message: allowed.message };
 
     try {
@@ -1271,7 +1287,7 @@ export async function updateOtClient(
 
     const ot = await prisma.intervention.findUnique({ where: { id: interventionId } });
     if (!ot) return { success: false, message: 'OT no encontrada.' };
-    const allowed = canMutateOt(session.user.role, ot);
+    const allowed = canMutateOt(session.user.role, session.user.id, ot);
     if (!allowed.ok) return { success: false, message: allowed.message };
 
     try {
@@ -1332,6 +1348,13 @@ export async function generateOtPdfBase64(interventionId: string): Promise<{
 
         if (!interventionData) {
             return { success: false, message: 'Orden de Trabajo no encontrada.' };
+        }
+
+        if (
+            session.user.role !== 'ADMIN' &&
+            interventionData.performedById !== session.user.id
+        ) {
+            return { success: false, message: 'No tenés permiso sobre esta OT.' };
         }
 
         if (interventionData.status === 'CANCELADA') {
