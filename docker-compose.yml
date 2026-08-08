@@ -1,56 +1,60 @@
 version: '3.8'
 
+# Docker Compose lee automáticamente el archivo `.env` del mismo directorio
+# para sustituir ${VARS}. El servicio `app` también carga ese archivo vía env_file.
+# En el VPS: mantené un `.env` con los valores de producción (no se commitea).
+
 services:
   # ---------------------------------------------------
   # 1. Servicio de PostgreSQL (Base de Datos)
   # ---------------------------------------------------
   db:
-    image: postgres:17-alpine # Versión 17 de PostgreSQL (imagen ligera)
+    image: postgres:17-alpine
     container_name: taller_db
     restart: always
     environment:
-      # Credenciales y nombre de la base de datos (AJUSTA ESTOS VALORES)
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: Root.1234
-      POSTGRES_DB: mecnobile-db
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-Root.1234}
+      POSTGRES_DB: ${POSTGRES_DB:-mecnobile-db}
     ports:
-      # Mapea el puerto del contenedor (5432) al puerto del host (5432)
       - "5432:5432"
     volumes:
-      # Persistencia de datos: almacena los datos en un volumen para que persistan
       - postgres_data:/var/lib/postgresql/data
-      # Opcional: Si necesitas scripts de inicialización, descomenta:
-      # - ./init-scripts:/docker-entrypoint-initdb.d
 
   # ---------------------------------------------------
   # 2. Servicio de Aplicación (Taller Node.js/Next.js)
   # ---------------------------------------------------
   app:
-    image: localhost:5000/taller-app:latest
+    image: ${REGISTRY_URL:-localhost:5000}/${IMAGE_NAME:-taller-app}:${IMAGE_VERSION:-latest}
     container_name: taller_app
     restart: always
     ports:
-      # Mapea el puerto del host (3000) al puerto de la aplicación (3000)
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      # La URL de conexión a la BD, usando el nombre del servicio 'db'
-      # Asegúrate de que coincida con tus credenciales
-      DATABASE_URL: postgresql://root:Root.1234@db:5432/mecnobile-db?schema=public
-      AUTH_SECRET: KM2MEfNVxgH0NYXdBG0Q2FY0/dOf3aPKHygkO3NjOx0=
-      NEXTAUTH_URL: https://sistema.mecnobile.com.ar
-
-    # Asegura que la BD esté levantada antes de que inicie la app
+      # Hora del taller: si queda en UTC, los turnos que enviamos por WhatsApp
+      # salen corridos respecto a la hora elegida.
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      # Dentro de la red Docker el host de Postgres es el servicio "db"
+      # (el DATABASE_URL del .env suele apuntar a localhost para Prisma CLI).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:-Root.1234}@db:5432/${POSTGRES_DB:-mecnobile-db}?schema=public
+      AUTH_SECRET: ${AUTH_SECRET}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-${AUTH_SECRET}}
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      # Meta WhatsApp (también entran por env_file; listadas por claridad)
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_BUSINESS_ACCOUNT_ID: ${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_TEMPLATE_TURNO_CONFIRMADO: ${WHATSAPP_TEMPLATE_TURNO_CONFIRMADO:-turno_confirmado}
+      WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS: ${WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS:-turno_alternativas}
+      WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-es_AR}
     depends_on:
       - db
 
-    # Mapea el código local al contenedor para desarrollo (opcional)
-    # Si quieres usar Docker solo para producción, puedes comentar esta línea
-    # volumes:
-    #   - .:/app
-    #   - /app/node_modules # Evita sobreescribir node_modules del contenedor con el host
-
-# ---------------------------------------------------
-# 3. Volúmenes
-# ---------------------------------------------------
 volumes:
   postgres_data:

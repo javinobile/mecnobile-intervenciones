@@ -20,9 +20,9 @@ export default async function SettingsPage() {
                 Configuración del taller
             </h1>
             <p className="text-sm text-gray-500 mb-6">
-                Parámetros generales usados en las órdenes de trabajo.
+                Parámetros generales usados en las órdenes de trabajo y en la agenda de turnos.
             </p>
-            <SettingsForm initialHourlyRate={settings.hourlyRate} />
+            <SettingsForm initialSettings={settings} />
         </>
     );
 }

@@ -4,19 +4,19 @@
 import { useState } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { UserListItem, updateUserRole, deleteUser } from '@/actions/user.actions';
-import { Trash2, ChevronLeft, ChevronRight, Search, Loader2 } from 'lucide-react';
+import { Trash2, ChevronLeft, ChevronRight, Search, Loader2, Pencil, Shield } from 'lucide-react';
 import CreateUserModal from './CreateUserModal';
+import EditStaffUserModal from './EditStaffUserModal';
 
-// Roles disponibles (debe coincidir con el Enum de Prisma)
-const ROLES = ['ADMIN', 'MECHANIC', 'VIEWER'];
-type Role = 'ADMIN' | 'MECHANIC' | 'VIEWER';
+const STAFF_ROLES = ['MECHANIC', 'VIEWER'] as const;
+type StaffRole = 'MECHANIC' | 'VIEWER';
 
 interface UserTableProps {
     users: UserListItem[];
     totalPages: number;
     currentPage: number;
     query: string;
-    currentUserId: string; // ID del Admin logueado
+    currentUserId: string;
 }
 
 export default function UserTable({ users, totalPages, currentPage, query, currentUserId }: UserTableProps) {
@@ -26,10 +26,9 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
     const [searchQuery, setSearchQuery] = useState(query);
     const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
     const [isActionPending, setIsActionPending] = useState(false);
-    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false); // <-- NUEVO ESTADO PARA EL MODAL
+    const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+    const [editingUser, setEditingUser] = useState<UserListItem | null>(null);
 
-
-    // Utilidad para cambiar la URL y forzar la re-renderización del Server Component
     const handleNavigation = (page: number, q: string = searchQuery) => {
         const params = new URLSearchParams(searchParams.toString());
         params.set('page', page.toString());
@@ -41,9 +40,7 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
         router.push(`${pathname}?${params.toString()}`);
     };
 
-    // --- MANEJO DE ACCIONES ---
-
-    const handleRoleChange = async (userId: string, newRole: Role) => {
+    const handleRoleChange = async (userId: string, newRole: StaffRole) => {
         setIsActionPending(true);
         setActionMessage(null);
 
@@ -51,7 +48,6 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
 
         if (result.success) {
             setActionMessage({ type: 'success', text: result.message });
-            // Forzar revalidación y re-renderizado
             handleNavigation(currentPage);
         } else {
             setActionMessage({ type: 'error', text: result.message });
@@ -71,7 +67,6 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
 
         if (result.success) {
             setActionMessage({ type: 'success', text: result.message });
-            // Volver a cargar la página actual (o la primera si no quedan elementos)
             handleNavigation(currentPage);
         } else {
             setActionMessage({ type: 'error', text: result.message });
@@ -83,9 +78,17 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
         setIsCreateModalOpen(false);
         setActionMessage({ type: success ? 'success' : 'error', text: message });
         if (success) {
-            handleNavigation(1); // Volver a la primera página para ver el nuevo usuario
+            handleNavigation(1);
         }
-    }
+    };
+
+    const handleEditResult = (success: boolean, message: string) => {
+        setEditingUser(null);
+        setActionMessage({ type: success ? 'success' : 'error', text: message });
+        if (success) {
+            handleNavigation(currentPage);
+        }
+    };
 
     return (
         <div className="space-y-4">
@@ -95,6 +98,12 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
                     {actionMessage.text}
                 </div>
             )}
+
+            <p className="text-sm text-gray-600">
+                Podés crear y editar mecánicos/viewers (incluida la contraseña inicial).
+                Los administradores solo gestionan su propia cuenta desde{' '}
+                <a href="/dashboard/profile" className="text-blue-600 font-medium hover:underline">Mi Perfil</a>.
+            </p>
 
             <div className="flex justify-between items-start gap-3 flex-wrap">
 
@@ -119,7 +128,7 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
                         + Nuevo Usuario
                     </button>
                 </div>
-                
+
                 <div className="flex items-center space-x-2">
                     <span className="text-sm text-gray-600">Página {currentPage} de {totalPages}</span>
                     <button
@@ -153,41 +162,65 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
                     <tbody className="bg-white divide-y divide-gray-200">
                         {users.map((user) => {
                             const isSelf = user.id === currentUserId;
+                            const isPeerAdmin = user.role === 'ADMIN' && !isSelf;
+                            const isStaff = user.role === 'MECHANIC' || user.role === 'VIEWER';
+
                             return (
-                                <tr key={user.id} className={isSelf ? 'bg-yellow-50' : ''}>
+                                <tr key={user.id} className={isSelf ? 'bg-yellow-50' : isPeerAdmin ? 'bg-gray-50' : ''}>
                                     <td className="px-3 py-2.5 whitespace-nowrap text-sm font-medium text-gray-900">{user.name || 'N/A'}</td>
                                     <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{user.email}</td>
                                     <td className="px-3 py-2.5 whitespace-nowrap text-sm">
-                                        <select
-                                            value={user.role}
-                                            onChange={(e) => handleRoleChange(user.id, e.target.value as Role)}
-                                            disabled={isSelf || isActionPending}
-                                            className={`p-1 rounded text-xs font-semibold border 
-                                                ${user.role === 'ADMIN' ? 'bg-red-100 text-red-800 border-red-300' :
-                                                    user.role === 'MECHANIC' ? 'bg-blue-100 text-blue-800 border-blue-300' :
-                                                        'bg-gray-100 text-gray-800 border-gray-300'}
-                                                ${isSelf ? 'opacity-70 cursor-not-allowed' : 'cursor-pointer'}
-                                            `}
-                                        >
-                                            {ROLES.map(role => (
-                                                <option key={role} value={role}>{role}</option>
-                                            ))}
-                                        </select>
+                                        {isStaff ? (
+                                            <select
+                                                value={user.role}
+                                                onChange={(e) => handleRoleChange(user.id, e.target.value as StaffRole)}
+                                                disabled={isActionPending}
+                                                className={`p-1 rounded text-xs font-semibold border cursor-pointer
+                                                    ${user.role === 'MECHANIC' ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-gray-100 text-gray-800 border-gray-300'}
+                                                `}
+                                            >
+                                                {STAFF_ROLES.map((role) => (
+                                                    <option key={role} value={role}>{role}</option>
+                                                ))}
+                                            </select>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-semibold bg-red-100 text-red-800 border border-red-300">
+                                                <Shield className="w-3 h-3" />
+                                                ADMIN
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">
                                         {user.createdAt.toLocaleDateString()}
                                     </td>
                                     <td className="px-3 py-2.5 whitespace-nowrap text-right text-sm font-medium">
                                         {isSelf ? (
-                                            <span className="text-xs text-yellow-600">Es tu cuenta</span>
+                                            <a href="/dashboard/profile" className="text-xs text-yellow-700 font-medium hover:underline">
+                                                Mi Perfil
+                                            </a>
+                                        ) : isPeerAdmin ? (
+                                            <span className="text-xs text-gray-500">Perfil propio</span>
                                         ) : (
-                                            <button
-                                                onClick={() => handleDelete(user.id, user.name)}
-                                                disabled={isActionPending}
-                                                className="text-red-600 hover:text-red-900 ml-2 p-1.5 rounded-full hover:bg-red-50 disabled:opacity-50"
-                                            >
-                                                {isActionPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                                            </button>
+                                            <div className="inline-flex items-center gap-1">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setEditingUser(user)}
+                                                    disabled={isActionPending}
+                                                    title="Editar datos / contraseña"
+                                                    className="text-blue-600 hover:text-blue-900 p-1.5 rounded-full hover:bg-blue-50 disabled:opacity-50"
+                                                >
+                                                    <Pencil className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleDelete(user.id, user.name)}
+                                                    disabled={isActionPending}
+                                                    title="Eliminar"
+                                                    className="text-red-600 hover:text-red-900 p-1.5 rounded-full hover:bg-red-50 disabled:opacity-50"
+                                                >
+                                                    {isActionPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                                                </button>
+                                            </div>
                                         )}
                                     </td>
                                 </tr>
@@ -205,6 +238,12 @@ export default function UserTable({ users, totalPages, currentPage, query, curre
                 isOpen={isCreateModalOpen}
                 onClose={() => setIsCreateModalOpen(false)}
                 onSuccess={handleCreationResult}
+            />
+            <EditStaffUserModal
+                user={editingUser}
+                isOpen={!!editingUser}
+                onClose={() => setEditingUser(null)}
+                onSuccess={handleEditResult}
             />
             <div className="flex justify-center pt-2">
                 <span className="text-sm text-gray-600">Página {currentPage} de {totalPages}</span>

@@ -98,6 +98,8 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                             canResolveCancel={intervention.canResolveCancel}
                             displayStatus={intervention.displayStatus}
                             isAdmin={!!isAdmin}
+                            itemCount={intervention.items.length}
+                            cost={intervention.costNumber}
                         />
                     </section>
 

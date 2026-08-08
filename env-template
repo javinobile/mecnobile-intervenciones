@@ -1,13 +1,29 @@
-# Copiar a .env.local para desarrollo local (next dev / Prisma CLI).
-# Producción NO usa este archivo: las vars se inyectan en docker-compose.
-# El deploy usa PROD_DATABASE_URL (ver build-and-push.sh).
+# Usado por Prisma CLI y por Docker Compose (env_file / ${VARS}).
+# Para next dev también podés usar .env.local.
+# En el VPS: este mismo archivo `.env` con NEXTAUTH_URL de producción.
 
-# Postgres local (mismo usuario/DB que docker-compose service db)
+# Zona horaria del taller (si falta, el contenedor usa UTC y los turnos salen corridos)
+TZ=America/Argentina/Buenos_Aires
+
+POSTGRES_USER=root
+POSTGRES_PASSWORD=Root.1234
+POSTGRES_DB=mecnobile-db
+
+# Prisma CLI (localhost). Compose sobrescribe el host a `db` dentro del contenedor.
 DATABASE_URL="postgresql://root:Root.1234@localhost:5432/mecnobile-db?schema=public"
-
-# URL pública de la app en este entorno
 NEXTAUTH_URL="http://localhost:3000"
-
-# Secret de NextAuth. Usar el mismo valor en ambas (auth.ts acepta cualquiera).
 AUTH_SECRET=
 NEXTAUTH_SECRET=
+
+# --- Meta WhatsApp Cloud API ---
+META_APP_ID=your_meta_app_id
+META_APP_SECRET=your_meta_app_secret
+WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_BUSINESS_ACCOUNT_ID=your_waba_id
+WHATSAPP_API_VERSION=v21.0
+WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
+# Plantilla utilidad turno_confirmado: {{1}} nombre, {{2}} fecha, {{3}} hora
+WHATSAPP_TEMPLATE_TURNO_CONFIRMADO=turno_confirmado
+WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS=turno_alternativas
+WHATSAPP_TEMPLATE_LANGUAGE=es_AR

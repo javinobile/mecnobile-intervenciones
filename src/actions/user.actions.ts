@@ -212,7 +212,35 @@ export async function getUsersPage(page: number = 1, query: string = ''): Promis
 }
 
 /**
- * Permite al Admin modificar el rol de otro usuario.
+ * Los administradores solo pueden gestionar cuentas MECHANIC / VIEWER.
+ * Cada ADMIN administra su propio perfil; no se editan datos entre admins.
+ */
+async function assertCanManageStaffUser(adminUserId: string, targetUserId: string) {
+    if (adminUserId === targetUserId) {
+        return { ok: false as const, message: 'Operación denegada: usa Mi Perfil para administrar tu propia cuenta.' };
+    }
+
+    const target = await prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: { id: true, role: true, name: true, email: true },
+    });
+
+    if (!target) {
+        return { ok: false as const, message: 'Usuario no encontrado.' };
+    }
+
+    if (target.role === 'ADMIN') {
+        return {
+            ok: false as const,
+            message: 'No se pueden modificar datos de otro administrador. Cada admin gestiona su propio perfil.',
+        };
+    }
+
+    return { ok: true as const, target };
+}
+
+/**
+ * Permite al Admin modificar el rol entre MECHANIC y VIEWER (no de otro ADMIN).
  */
 export async function updateUserRole(targetUserId: string, newRole: 'ADMIN' | 'MECHANIC' | 'VIEWER'): Promise<{ success: boolean, message: string }> {
 
@@ -221,14 +249,13 @@ export async function updateUserRole(targetUserId: string, newRole: 'ADMIN' | 'M
         return { success: false, message: 'Acceso denegado: Se requiere rol de Administrador.' };
     }
 
-    // Un Admin no puede degradar o cambiar su propio rol (medida de seguridad)
-    if (session.user.id === targetUserId) {
-        return { success: false, message: 'Operación denegada: No puedes modificar tu propio rol.' };
+    if (newRole !== 'MECHANIC' && newRole !== 'VIEWER') {
+        return { success: false, message: 'Solo se puede asignar rol MECHANIC o VIEWER.' };
     }
 
-    // El rol debe ser uno de los definidos
-    if (!['ADMIN', 'MECHANIC', 'VIEWER'].includes(newRole)) {
-        return { success: false, message: 'Rol inválido.' };
+    const gate = await assertCanManageStaffUser(session.user.id, targetUserId);
+    if (!gate.ok) {
+        return { success: false, message: gate.message };
     }
 
     try {
@@ -237,7 +264,6 @@ export async function updateUserRole(targetUserId: string, newRole: 'ADMIN' | 'M
             data: { role: newRole }
         });
 
-        // Revalidar el path para actualizar la tabla
         revalidatePath('/dashboard/users');
 
         return { success: true, message: `Rol actualizado a ${newRole} con éxito.` };
@@ -249,7 +275,7 @@ export async function updateUserRole(targetUserId: string, newRole: 'ADMIN' | 'M
 }
 
 /**
- * Permite al Admin eliminar un usuario.
+ * Permite al Admin eliminar un MECHANIC o VIEWER (no otro ADMIN).
  */
 export async function deleteUser(targetUserId: string): Promise<{ success: boolean, message: string }> {
 
@@ -258,13 +284,12 @@ export async function deleteUser(targetUserId: string): Promise<{ success: boole
         return { success: false, message: 'Acceso denegado: Se requiere rol de Administrador.' };
     }
 
-    // Un Admin no puede eliminarse a sí mismo (medida de seguridad)
-    if (session.user.id === targetUserId) {
-        return { success: false, message: 'Operación denegada: No puedes eliminar tu propia cuenta.' };
+    const gate = await assertCanManageStaffUser(session.user.id, targetUserId);
+    if (!gate.ok) {
+        return { success: false, message: gate.message };
     }
 
     try {
-        // La eliminación en cascada debería manejar las sesiones y cuentas (gracias a onDelete: Cascade)
         await prisma.user.delete({
             where: { id: targetUserId }
         });
@@ -276,7 +301,6 @@ export async function deleteUser(targetUserId: string): Promise<{ success: boole
     } catch (error: any) {
         console.error("Error al eliminar el usuario:", error);
 
-        // Manejo de error si hay intervenciones asociadas (onDelete: Restrict)
         if (error.code === 'P2003') {
             return { success: false, message: 'No se puede eliminar: El usuario tiene Órdenes de Trabajo asociadas.' };
         }
@@ -285,11 +309,89 @@ export async function deleteUser(targetUserId: string): Promise<{ success: boole
     }
 }
 
+export interface AdminUpdateStaffData {
+    name: string;
+    email: string;
+    role: 'MECHANIC' | 'VIEWER';
+    /** Si se envía, reemplaza la contraseña (datos iniciales / reset). */
+    newPassword?: string;
+}
+
+/**
+ * Admin actualiza nombre, email, rol y/o password inicial de un MECHANIC o VIEWER.
+ * No aplica a cuentas ADMIN (cada admin usa Mi Perfil).
+ */
+export async function adminUpdateStaffUser(
+    targetUserId: string,
+    data: AdminUpdateStaffData
+): Promise<{ success: boolean, message: string }> {
+    const session = await getServerSession(authOptions);
+    if (!session || session.user.role !== 'ADMIN') {
+        return { success: false, message: 'Acceso denegado: Se requiere rol de Administrador.' };
+    }
+
+    const gate = await assertCanManageStaffUser(session.user.id, targetUserId);
+    if (!gate.ok) {
+        return { success: false, message: gate.message };
+    }
+
+    const name = data.name?.trim();
+    const email = data.email?.trim().toLowerCase();
+    const role = data.role;
+
+    if (!name || name.length < 2) {
+        return { success: false, message: 'El nombre es demasiado corto.' };
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return { success: false, message: 'El formato del email es inválido.' };
+    }
+    if (role !== 'MECHANIC' && role !== 'VIEWER') {
+        return { success: false, message: 'Solo se puede asignar rol MECHANIC o VIEWER desde esta pantalla.' };
+    }
+
+    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    if (existingEmail && existingEmail.id !== targetUserId) {
+        return { success: false, message: 'Ese correo electrónico ya está en uso.' };
+    }
+
+    const updatePayload: {
+        name: string;
+        email: string;
+        role: 'MECHANIC' | 'VIEWER';
+        passwordHash?: string;
+    } = { name, email, role };
+
+    if (data.newPassword) {
+        if (data.newPassword.length < 6) {
+            return { success: false, message: 'La contraseña debe tener al menos 6 caracteres.' };
+        }
+        updatePayload.passwordHash = await bcrypt.hash(data.newPassword, 10);
+    }
+
+    try {
+        await prisma.user.update({
+            where: { id: targetUserId },
+            data: updatePayload,
+        });
+
+        revalidatePath('/dashboard/users');
+        return {
+            success: true,
+            message: data.newPassword
+                ? 'Usuario actualizado y contraseña reiniciada.'
+                : 'Usuario actualizado con éxito.',
+        };
+    } catch (error) {
+        console.error('Error al actualizar usuario staff:', error);
+        return { success: false, message: 'Error interno al actualizar el usuario.' };
+    }
+}
+
 export interface CreateUserData {
     name: string;
     email: string;
     password: string;
-    role: 'ADMIN' | 'MECHANIC' | 'VIEWER';
+    role: 'MECHANIC' | 'VIEWER';
 }
 
 /**
@@ -312,35 +414,34 @@ export async function createUser(data: CreateUserData): Promise<{ success: boole
     if (password.length < 6) {
         return { success: false, message: 'La contraseña debe tener al menos 6 caracteres.' };
     }
-    if (!['ADMIN', 'MECHANIC', 'VIEWER'].includes(role)) {
-        return { success: false, message: 'Rol de usuario inválido.' };
+    // Alta operativa: solo MECHANIC / VIEWER. Los ADMIN se administran solos vía Mi Perfil.
+    if (role !== 'MECHANIC' && role !== 'VIEWER') {
+        return {
+            success: false,
+            message: 'Solo se pueden crear usuarios MECHANIC o VIEWER. Los administradores gestionan su propio perfil.',
+        };
     }
 
     try {
-        // 2. Chequeo de duplicidad de Email
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        const existingUser = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
         if (existingUser) {
             return { success: false, message: 'Ya existe un usuario con ese correo electrónico.' };
         }
 
-        // 3. Hashear la Contraseña
         const passwordHash = await bcrypt.hash(password, 10);
 
-        // 4. Crear el Usuario
         await prisma.user.create({
             data: {
                 name: name.trim(),
                 email: email.trim().toLowerCase(),
                 passwordHash: passwordHash,
                 role: role,
-                // Opcional: podrías setear emailVerified a una fecha si confías en la creación por Admin
             }
         });
 
-        // 5. Revalidar la caché de la lista de usuarios
         revalidatePath('/dashboard/users');
 
-        return { success: true, message: `Usuario ${name} creado con éxito como ${role}.` };
+        return { success: true, message: `Usuario ${name} creado con éxito como ${role}. Contraseña inicial lista para el primer acceso.` };
 
     } catch (error) {
         console.error("Error al crear usuario:", error);

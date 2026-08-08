@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Wrench, PlusCircle, Clock, CheckCircle, XCircle, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { getInterventionsPage, InterventionListItem } from '@/actions/intervention.actions';
 import InterventionsSearchForm from '@/components/interventions/InterventionsSearchForm';
+import OtTotalsSummary from '@/components/interventions/OtTotalsSummary';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
 
@@ -11,6 +12,9 @@ interface InterventionsPageProps {
         page?: string;
         q?: string;
         status?: string;
+        from?: string;
+        to?: string;
+        range?: string;
     }>;
 }
 
@@ -22,17 +26,30 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
     const requestedPage = parseInt(resolved.page || '1');
     const query = resolved.q || '';
     const status = resolved.status || '';
+    const dateFrom = isAdmin ? (resolved.from || '') : '';
+    const dateTo = isAdmin ? (resolved.to || '') : '';
+    const range = isAdmin ? (resolved.range || '') : '';
 
-    const { interventions, totalPages, currentPage } = await getInterventionsPage(requestedPage, query, status);
+    const { interventions, totalPages, currentPage, totalCount, totalCost } = await getInterventionsPage(
+        requestedPage,
+        query,
+        status,
+        dateFrom,
+        dateTo
+    );
 
     const isFirstPage = currentPage <= 1;
     const isLastPage = currentPage >= totalPages;
+    const hasFilters = !!(query || status || dateFrom || dateTo);
 
     const pageHref = (page: number) => {
         const params = new URLSearchParams();
         params.set('page', page.toString());
         if (query) params.set('q', query);
         if (status) params.set('status', status);
+        if (dateFrom) params.set('from', dateFrom);
+        if (dateTo) params.set('to', dateTo);
+        if (range) params.set('range', range);
         return `/dashboard/interventions?${params.toString()}`;
     };
 
@@ -81,7 +98,9 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                 Órdenes de Trabajo
             </h1>
             <p className="text-sm text-gray-500 mb-4">
-                Vista general de todas las órdenes de trabajo.
+                {isAdmin
+                    ? 'Vista general con filtros y totales del período seleccionado.'
+                    : 'Vista de las órdenes de trabajo que gestionaste.'}
             </p>
 
             <div className="flex flex-col gap-3 mb-4">
@@ -92,7 +111,17 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     <PlusCircle className="w-4 h-4 mr-1.5" />
                     Abrir Nueva OT
                 </Link>
-                <InterventionsSearchForm initialQuery={query} initialStatus={status} isAdmin={!!isAdmin} />
+                <InterventionsSearchForm
+                    initialQuery={query}
+                    initialStatus={status}
+                    initialFrom={dateFrom}
+                    initialTo={dateTo}
+                    initialRange={range}
+                    isAdmin={!!isAdmin}
+                />
+                {isAdmin && (
+                    <OtTotalsSummary totalCount={totalCount} totalCost={totalCost} />
+                )}
             </div>
 
             {/* Mobile cards */}
@@ -111,11 +140,16 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                         <p className="text-sm text-gray-600">{i.carMakeModel}</p>
                         <p className="text-sm text-gray-500 mt-1">{i.ownerName}</p>
                         <p className="text-xs text-gray-400 mt-2">{formatDate(i.dateOfIntervention)} · {i.performedByName}</p>
+                        {isAdmin && (
+                            <p className="text-xs font-medium text-emerald-700 mt-1">
+                                {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(i.cost)}
+                            </p>
+                        )}
                     </Link>
                 ))}
                 {interventions.length === 0 && (
                     <div className="text-center py-8 text-sm text-gray-500 bg-white rounded-xl border">
-                        {query || status
+                        {hasFilters
                             ? 'No se encontraron órdenes con esos filtros.'
                             : 'Aún no hay órdenes de trabajo.'}
                     </div>
@@ -133,6 +167,9 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehículo</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Por</th>
+                            {isAdmin && (
+                                <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Costo</th>
+                            )}
                             <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
                         </tr>
                     </thead>
@@ -147,6 +184,11 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                                 </td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{i.ownerName}</td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{i.performedByName}</td>
+                                {isAdmin && (
+                                    <td className="px-3 py-2.5 whitespace-nowrap text-sm text-right text-emerald-800 font-medium">
+                                        {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(i.cost)}
+                                    </td>
+                                )}
                                 <td className="px-3 py-2.5 whitespace-nowrap text-right text-sm font-medium">
                                     <Link href={`/dashboard/interventions/${i.id}`} className="text-blue-600 hover:text-blue-900">
                                         Ver
@@ -159,7 +201,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
 
                 {interventions.length === 0 && (
                     <div className="text-center py-8 text-sm text-gray-500">
-                        {query || status
+                        {hasFilters
                             ? 'No se encontraron órdenes de trabajo con esos filtros.'
                             : 'Aún no hay órdenes de trabajo registradas.'}
                     </div>

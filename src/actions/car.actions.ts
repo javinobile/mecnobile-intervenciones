@@ -623,16 +623,27 @@ export async function getClientsPage(page: number = 1, query: string = ''): Prom
     const offset = (page - 1) * CLIENT_PAGE_SIZE;
     const search = query.trim();
 
-    // Configuración del filtro de búsqueda
-    const whereClause = search.length > 0 ? {
+    // Búsqueda blanda: cada palabra debe aparecer en algún campo
+    // ("nobile javier" encuentra a Javier Nobile)
+    const tokens = search.length > 0
+        ? search.split(/\s+/).map((t) => t.trim()).filter(Boolean)
+        : [];
+
+    const tokenClause = (token: string) => ({
         OR: [
-            { dni: { contains: search, mode: 'insensitive' } },
-            { firstName: { contains: search, mode: 'insensitive' } },
-            { lastName: { contains: search, mode: 'insensitive' } },
-            { phone: { contains: search, mode: 'insensitive' } },
-            { email: { contains: search, mode: 'insensitive' } },
-        ]
-    } : {} as any;
+            { dni: { contains: token, mode: 'insensitive' as const } },
+            { firstName: { contains: token, mode: 'insensitive' as const } },
+            { lastName: { contains: token, mode: 'insensitive' as const } },
+            { phone: { contains: token, mode: 'insensitive' as const } },
+            { email: { contains: token, mode: 'insensitive' as const } },
+        ],
+    });
+
+    const whereClause = tokens.length === 0
+        ? {}
+        : tokens.length === 1
+            ? tokenClause(tokens[0])
+            : { AND: tokens.map(tokenClause) };
 
     try {
         // 1. OBTENER EL TOTAL DE REGISTROS

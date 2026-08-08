@@ -3,8 +3,10 @@
 # -----------------------------------------------------------
 FROM node:20-alpine AS base
 
-# Instala la librería de compatibilidad con libc (esencial para Alpine y Node/Prisma)
-RUN apk add --no-cache libc6-compat openssl
+# libc6-compat/openssl: Node y Prisma en Alpine.
+# tzdata: sin este paquete Node ignora TZ y todo queda en UTC (los horarios de
+# turnos enviados por WhatsApp saldrían corridos respecto a la hora del taller).
+RUN apk add --no-cache libc6-compat openssl tzdata
 
 # -----------------------------------------------------------
 # DEPENDENCIAS: Instala dependencias y prepara el entorno
@@ -54,6 +56,8 @@ FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+# Hora del taller: puede sobreescribirse desde el compose/.env
+ENV TZ=America/Argentina/Buenos_Aires
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs

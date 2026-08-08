@@ -21,6 +21,17 @@ async function main() {
   });
   console.log(`Usuario Staff creado con ID: ${staffUser.id}`);
 
+  const whatsappBot = await prisma.user.upsert({
+    where: { email: 'whatsapp-bot@mecnobile.local' },
+    update: { name: 'WhatsApp Bot' },
+    create: {
+      email: 'whatsapp-bot@mecnobile.local',
+      name: 'WhatsApp Bot',
+      role: 'VIEWER',
+    },
+  });
+  console.log(`Usuario WhatsApp Bot creado con ID: ${whatsappBot.id}`);
+
 
   // --- 2. CREACIÓN DE CLIENTES ---
 

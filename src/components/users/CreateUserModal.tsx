@@ -11,17 +11,17 @@ interface CreateUserModalProps {
     onSuccess: (success: boolean, message: string) => void;
 }
 
-const ROLES = ['MECHANIC', 'ADMIN', 'VIEWER'];
+const ROLES = ['MECHANIC', 'VIEWER'] as const;
 
 export default function CreateUserModal({ isOpen, onClose, onSuccess }: CreateUserModalProps) {
-    if (!isOpen) return null;
-
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const [role, setRole] = useState<'ADMIN' | 'MECHANIC' | 'VIEWER'>('MECHANIC');
+    const [role, setRole] = useState<'MECHANIC' | 'VIEWER'>('MECHANIC');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [message, setMessage] = useState<{ type: 'error', text: string } | null>(null);
+
+    if (!isOpen) return null;
 
     const resetForm = () => {
         setName('');
@@ -93,18 +93,20 @@ export default function CreateUserModal({ isOpen, onClose, onSuccess }: CreateUs
 
                     {/* Contraseña */}
                     <div>
-                        <label htmlFor="password" className="block text-sm font-medium text-gray-700">Contraseña Temporal (mín. 6)</label>
+                        <label htmlFor="password" className="block text-sm font-medium text-gray-700">Contraseña inicial (mín. 6)</label>
                         <input type="password" id="password" value={password} onChange={(e) => setPassword(e.target.value)} required className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2" />
+                        <p className="mt-1 text-xs text-gray-500">El usuario podrá cambiarla después desde Mi Perfil.</p>
                     </div>
 
                     {/* Rol */}
                     <div>
                         <label htmlFor="role" className="block text-sm font-medium text-gray-700">Rol de Usuario</label>
-                        <select id="role" value={role} onChange={(e) => setRole(e.target.value as 'ADMIN' | 'MECHANIC' | 'VIEWER')} required className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
+                        <select id="role" value={role} onChange={(e) => setRole(e.target.value as 'MECHANIC' | 'VIEWER')} required className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2">
                             {ROLES.map(r => (
                                 <option key={r} value={r}>{r}</option>
                             ))}
                         </select>
+                        <p className="mt-1 text-xs text-gray-500">Solo mecánicos y viewers. Los administradores gestionan su propio perfil.</p>
                     </div>
 
                     {/* Botón de Creación */}

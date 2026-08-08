@@ -21,6 +21,8 @@ interface InterventionEditFormProps {
     canResolveCancel: boolean;
     displayStatus: string;
     isAdmin: boolean;
+    itemCount: number;
+    cost: number;
 }
 
 type FormSnapshot = {
@@ -51,6 +53,8 @@ export default function InterventionEditForm({
     canResolveCancel,
     displayStatus,
     isAdmin,
+    itemCount,
+    cost,
 }: InterventionEditFormProps) {
     const router = useRouter();
     const [notes, setNotes] = useState(initialNotes || '');
@@ -274,7 +278,17 @@ export default function InterventionEditForm({
                         <button
                             type="button"
                             disabled={loading}
-                            onClick={() => setConfirmClose(true)}
+                            onClick={() => {
+                                if (itemCount === 0 || cost <= 0) {
+                                    setMessage({
+                                        type: 'error',
+                                        text: 'No se puede cerrar una OT sin ítems o con importe $0. Agregá al menos un ítem con valor monetario.',
+                                    });
+                                    return;
+                                }
+                                setMessage(null);
+                                setConfirmClose(true);
+                            }}
                             className="w-full min-h-11 rounded-lg bg-green-600 text-white font-semibold hover:bg-green-700 disabled:opacity-50"
                         >
                             Cerrar orden de trabajo
@@ -286,6 +300,9 @@ export default function InterventionEditForm({
                             <p className="text-sm text-green-900">
                                 ¿Confirmás el cierre? Una vez cerrada, <strong>no se podrá volver a abrir</strong> ni
                                 modificar desde el rol mecánico. Solo un administrador podrá introducir cambios.
+                            </p>
+                            <p className="text-xs text-green-800">
+                                Para cerrar la OT debe tener al menos un ítem con valor monetario (importe total mayor a $0).
                             </p>
                             <div className="flex flex-col sm:flex-row gap-2">
                                 <button

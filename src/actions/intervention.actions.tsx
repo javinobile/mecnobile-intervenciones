@@ -11,6 +11,7 @@ import prisma from "../../lib/prisma";
 import { normalizeLicensePlate, validateNewLicensePlate } from "../../lib/utils";
 import {
     findCarIdsByNormalizedPlateContains,
+    findCarIdByNormalizedPlateExact,
     findCarIdByNormalizedPlateExactInTx,
 } from "../../lib/plate-search";
 import { revalidatePath } from "next/cache";
@@ -61,6 +62,20 @@ export interface InterventionsPageResult {
     interventions: InterventionListItem[];
     totalPages: number;
     currentPage: number;
+    /** Total de OTs del filtro (sin paginar). */
+    totalCount: number;
+    /** Suma de cost del filtro (sin paginar). */
+    totalCost: number;
+}
+
+/** Interpreta YYYY-MM-DD como inicio/fin de día (UTC) para filtrar dateOfIntervention. */
+function parseDateBound(isoDate: string, endOfDay: boolean): Date | null {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
+    const [y, m, d] = isoDate.split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return endOfDay
+        ? new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999))
+        : new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
 }
 
 function buildTermFilter(term: string, plateCarIds: string[] = []): Prisma.InterventionWhereInput {
@@ -108,10 +123,20 @@ function parseStatus(status: string): InterventionStatus | null {
 export async function getInterventionsPage(
     page: number = 1,
     query: string = '',
-    status: string = ''
+    status: string = '',
+    dateFrom: string = '',
+    dateTo: string = ''
 ): Promise<InterventionsPageResult> {
+    const empty: InterventionsPageResult = {
+        interventions: [],
+        totalPages: 0,
+        currentPage: 1,
+        totalCount: 0,
+        totalCost: 0,
+    };
+
     const session = await getServerSession(authOptions);
-    if (!session) { return { interventions: [], totalPages: 0, currentPage: 1 }; }
+    if (!session) return empty;
 
     const isAdmin = session.user.role === 'ADMIN';
     const currentPage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
@@ -125,16 +150,13 @@ export async function getInterventionsPage(
 
     let statusClause: Prisma.InterventionWhereInput = {};
     if (statusFilter === 'ABIERTA') {
-        // Abiertas reales, sin solicitud de cancelación pendiente
         statusClause = { status: 'ABIERTA', cancelRequestedAt: null };
     } else if (statusFilter === 'CERRADA') {
         statusClause = { status: 'CERRADA' };
     } else if (statusFilter === 'CANCELADA') {
         if (isAdmin) {
-            // Admin: solo canceladas confirmadas
             statusClause = { status: 'CANCELADA' };
         } else {
-            // Mecánico: canceladas confirmadas + pendientes (le figuran canceladas)
             statusClause = {
                 OR: [
                     { status: 'CANCELADA' },
@@ -146,21 +168,45 @@ export async function getInterventionsPage(
         statusClause = { status: 'ABIERTA', cancelRequestedAt: { not: null } };
     }
 
+    // Rango de fechas solo aplica para ADMIN (el UI no lo envía en otros roles)
+    let dateClause: Prisma.InterventionWhereInput = {};
+    if (isAdmin) {
+        const fromBound = dateFrom ? parseDateBound(dateFrom.trim(), false) : null;
+        const toBound = dateTo ? parseDateBound(dateTo.trim(), true) : null;
+        if (fromBound || toBound) {
+            dateClause = {
+                dateOfIntervention: {
+                    ...(fromBound ? { gte: fromBound } : {}),
+                    ...(toBound ? { lte: toBound } : {}),
+                },
+            };
+        }
+    }
+
     const whereClause: Prisma.InterventionWhereInput = {
         ...(terms.length > 0
             ? { AND: terms.map((term, idx) => buildTermFilter(term, plateIdsByTerm[idx] || [])) }
             : {}),
         ...statusClause,
+        ...dateClause,
         // Mecánico/viewer: solo sus OT. Admin: todas.
         ...(!isAdmin ? { performedById: session.user.id } : {}),
     };
 
     try {
-        const totalCount = await prisma.intervention.count({ where: whereClause });
+        const [totalCount, costAgg] = await Promise.all([
+            prisma.intervention.count({ where: whereClause }),
+            prisma.intervention.aggregate({
+                where: whereClause,
+                _sum: { cost: true },
+            }),
+        ]);
+
+        const totalCost = costAgg._sum.cost?.toNumber() ?? 0;
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
         const safePage = totalPages > 0 ? Math.min(currentPage, totalPages) : 1;
 
-        const interventions = await prisma.intervention.findMany({
+        const rows = await prisma.intervention.findMany({
             where: whereClause,
             take: PAGE_SIZE,
             skip: (safePage - 1) * PAGE_SIZE,
@@ -189,7 +235,7 @@ export async function getInterventionsPage(
             }
         });
 
-        const formatted: InterventionListItem[] = interventions.map(i => {
+        const formatted: InterventionListItem[] = rows.map(i => {
             const cancelRequested = i.cancelRequestedAt != null;
             let displayStatus: InterventionListItem['displayStatus'] = i.status;
             if (i.status === 'ABIERTA' && cancelRequested) {
@@ -212,10 +258,16 @@ export async function getInterventionsPage(
             };
         });
 
-        return { interventions: formatted, totalPages, currentPage: safePage };
+        return {
+            interventions: formatted,
+            totalPages,
+            currentPage: safePage,
+            totalCount,
+            totalCost,
+        };
     } catch (error) {
         console.error("Error fetching interventions:", error);
-        return { interventions: [], totalPages: 0, currentPage: 1 };
+        return empty;
     }
 }
 
@@ -311,6 +363,34 @@ export async function searchCarsForOt(searchTerm: string): Promise<OtCarSearchRe
     });
 }
 
+/** Cada palabra debe matchear en algún campo (nombre, apellido, DNI, etc.).
+ *  Así "nobile javier" encuentra a Javier Nobile. */
+function buildSoftClientSearchWhere(searchTerm: string): Prisma.ClientWhereInput | null {
+    const tokens = searchTerm
+        .trim()
+        .split(/\s+/)
+        .map((t) => t.trim())
+        .filter((t) => t.length >= 1);
+
+    if (tokens.length === 0) return null;
+
+    const tokenClause = (token: string): Prisma.ClientWhereInput => ({
+        OR: [
+            { firstName: { contains: token, mode: 'insensitive' } },
+            { lastName: { contains: token, mode: 'insensitive' } },
+            { dni: { contains: token, mode: 'insensitive' } },
+            { phone: { contains: token, mode: 'insensitive' } },
+            { email: { contains: token, mode: 'insensitive' } },
+        ],
+    });
+
+    if (tokens.length === 1) {
+        return tokenClause(tokens[0]);
+    }
+
+    return { AND: tokens.map(tokenClause) };
+}
+
 export async function searchClientsForOt(searchTerm: string): Promise<OtClientSearchResult[]> {
     const session = await getServerSession(authOptions);
     if (!session || (session.user.role !== 'ADMIN' && session.user.role !== 'MECHANIC')) {
@@ -320,16 +400,11 @@ export async function searchClientsForOt(searchTerm: string): Promise<OtClientSe
     const search = searchTerm.trim();
     if (search.length < 2) return [];
 
+    const where = buildSoftClientSearchWhere(search);
+    if (!where) return [];
+
     const clients = await prisma.client.findMany({
-        where: {
-            OR: [
-                { dni: { contains: search, mode: 'insensitive' } },
-                { firstName: { contains: search, mode: 'insensitive' } },
-                { lastName: { contains: search, mode: 'insensitive' } },
-                { phone: { contains: search, mode: 'insensitive' } },
-                { email: { contains: search, mode: 'insensitive' } },
-            ]
-        },
+        where,
         select: {
             id: true,
             firstName: true,
@@ -369,6 +444,113 @@ export async function searchClientsForOt(searchTerm: string): Promise<OtClientSe
             year: o.car.year,
         })),
     }));
+}
+
+export type ExistingCarMatch = OtCarSearchResult & {
+    matchedBy: 'plate' | 'vin';
+};
+
+/**
+ * Busca un vehículo existente por patente normalizada y/o VIN exacto.
+ * La patente se compara sin guiones ni espacios (FAM-250 ≡ FAM250).
+ * Usado al intentar dar de alta un auto nuevo para evitar duplicados
+ * y ofrecer asociar el existente al propietario elegido.
+ */
+export async function findExistingCarByPlateOrVin(params: {
+    plate?: string;
+    vin?: string;
+}): Promise<ExistingCarMatch | null> {
+    const session = await getServerSession(authOptions);
+    if (!session || (session.user.role !== 'ADMIN' && session.user.role !== 'MECHANIC')) {
+        return null;
+    }
+
+    // Siempre normalizar: FAM-250 y FAM250 deben resolverse al mismo vehículo
+    const plate = params.plate?.trim()
+        ? normalizeLicensePlate(params.plate)
+        : '';
+    const vin = params.vin?.trim().replace(/\s/g, '').toUpperCase() || '';
+
+    if (!plate && !vin) return null;
+
+    let carId: string | null = null;
+    let matchedBy: 'plate' | 'vin' = 'plate';
+
+    if (plate) {
+        carId = await findCarIdByNormalizedPlateExact(plate);
+        if (carId) matchedBy = 'plate';
+    }
+
+    if (!carId && vin) {
+        const byVin = await prisma.car.findUnique({
+            where: { vin },
+            select: { id: true },
+        });
+        if (byVin) {
+            carId = byVin.id;
+            matchedBy = 'vin';
+        }
+    }
+
+    // Si matcheó por patente, verificar también VIN distinto (mismo auto o conflicto cruzado)
+    if (carId && vin && matchedBy === 'plate') {
+        const byVin = await prisma.car.findUnique({
+            where: { vin },
+            select: { id: true },
+        });
+        // Preferir reportar el match más específico; si son IDs distintos, el de patente gana
+        // (createIntervention bloqueará ambos de todos modos).
+        if (byVin && byVin.id !== carId) {
+            // Conflicto cruzado: patente de un auto, VIN de otro — reportar patente
+            matchedBy = 'plate';
+        }
+    }
+
+    if (!carId) return null;
+
+    const car = await prisma.car.findUnique({
+        where: { id: carId },
+        select: {
+            id: true,
+            licensePlate: true,
+            make: true,
+            model: true,
+            year: true,
+            vin: true,
+            ownershipHistory: {
+                where: { endDate: null },
+                select: {
+                    client: {
+                        select: {
+                            id: true,
+                            firstName: true,
+                            lastName: true,
+                            dni: true,
+                            phone: true,
+                        },
+                    },
+                },
+                take: 1,
+            },
+        },
+    });
+
+    if (!car) return null;
+
+    const owner = car.ownershipHistory[0]?.client;
+    return {
+        id: car.id,
+        plate: car.licensePlate,
+        make: car.make || 'N/A',
+        model: car.model || 'N/A',
+        year: car.year,
+        vin: car.vin,
+        ownerId: owner?.id ?? null,
+        ownerName: owner ? `${owner.firstName} ${owner.lastName}` : 'Sin dueño',
+        ownerDni: owner?.dni ?? null,
+        ownerPhone: owner?.phone ?? null,
+        matchedBy,
+    };
 }
 
 async function transferOwnership(
@@ -459,6 +641,8 @@ export interface CreateOtPayload {
     description: string;
     notes?: string;
     mileageKm: string;
+    /** Turno confirmado del que se abre la OT (queda vinculado para no duplicarlo) */
+    appointmentId?: string;
 }
 
 /**
@@ -479,6 +663,25 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
     const mileageKm = parseInt(data.mileageKm, 10);
     if (isNaN(mileageKm)) {
         return { success: false, message: 'El Kilometraje debe ser un número válido.' };
+    }
+
+    if (data.appointmentId) {
+        const appointment = await prisma.appointment.findUnique({
+            where: { id: data.appointmentId },
+            select: { status: true, interventionId: true },
+        });
+        if (!appointment) {
+            return { success: false, message: 'El turno indicado no existe.' };
+        }
+        if (appointment.status !== 'CONFIRMADO') {
+            return {
+                success: false,
+                message: 'Solo se puede abrir una OT desde un turno confirmado.',
+            };
+        }
+        if (appointment.interventionId) {
+            return { success: false, message: 'Ese turno ya tiene una OT abierta.' };
+        }
     }
 
     try {
@@ -512,7 +715,22 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
                 const existingByPlateId = await findCarIdByNormalizedPlateExactInTx(tx, plate);
                 const existingByVin = await tx.car.findUnique({ where: { vin } });
                 if (existingByPlateId || existingByVin) {
-                    throw new Error(`El vehículo con patente ${plate} o VIN ya está registrado. Búsquelo en el sistema.`);
+                    const byPlate = existingByPlateId
+                        ? await tx.car.findUnique({ where: { id: existingByPlateId }, select: { licensePlate: true } })
+                        : null;
+                    if (existingByPlateId && byPlate && normalizeLicensePlate(byPlate.licensePlate) === plate) {
+                        throw new Error(
+                            `La patente ${byPlate.licensePlate} ya está registrada. Use el vehículo existente o asócielo al propietario elegido.`
+                        );
+                    }
+                    if (existingByVin) {
+                        throw new Error(
+                            `El VIN ${vin} ya está registrado (patente ${existingByVin.licensePlate}). Use el vehículo existente o asócielo al propietario elegido.`
+                        );
+                    }
+                    throw new Error(
+                        'El vehículo ya está registrado. Use el existente o asócielo al propietario elegido.'
+                    );
                 }
 
                 const car = await tx.car.create({
@@ -567,7 +785,7 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
             const totalInterventions = await tx.intervention.count();
             const otNumber = totalInterventions + 1;
 
-            return tx.intervention.create({
+            const intervention = await tx.intervention.create({
                 data: {
                     otNumber,
                     carId,
@@ -578,11 +796,29 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
                     performedById,
                 },
             });
+
+            if (data.appointmentId) {
+                // updateMany + filtro por interventionId null: evita doble OT si hay dos pestañas abiertas
+                const linked = await tx.appointment.updateMany({
+                    where: {
+                        id: data.appointmentId,
+                        status: 'CONFIRMADO',
+                        interventionId: null,
+                    },
+                    data: { interventionId: intervention.id },
+                });
+                if (linked.count === 0) {
+                    throw new Error('Ese turno ya tiene una OT abierta.');
+                }
+            }
+
+            return intervention;
         });
 
         revalidatePath('/dashboard/interventions');
         revalidatePath('/dashboard/cars');
         revalidatePath('/dashboard/clients');
+        revalidatePath('/dashboard/turnos');
 
         return {
             success: true,
@@ -835,13 +1071,23 @@ export async function closeIntervention(id: string): Promise<{ success: boolean;
     }
 
     try {
-        const ot = await prisma.intervention.findUnique({ where: { id } });
+        const ot = await prisma.intervention.findUnique({
+            where: { id },
+            include: { _count: { select: { items: true } } },
+        });
         if (!ot) return { success: false, message: 'OT no encontrada.' };
         if (session.user.role !== 'ADMIN' && ot.performedById !== session.user.id) {
             return { success: false, message: 'No tenés permiso sobre esta OT.' };
         }
         if (ot.status !== 'ABIERTA' || ot.cancelRequestedAt) {
             return { success: false, message: 'Solo se pueden cerrar órdenes abiertas sin cancelación pendiente.' };
+        }
+        if (ot._count.items === 0 || ot.cost.equals(0)) {
+            return {
+                success: false,
+                message:
+                    'No se puede cerrar una OT sin ítems o con importe $0. Agregá al menos un ítem con valor monetario.',
+            };
         }
 
         await prisma.intervention.update({

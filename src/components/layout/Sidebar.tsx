@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import {
   Car, Users, User, LogOut, Home, User2, History,
-  LucideProps, Menu, X, Wrench, PlusCircle, Cog
+  LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays
 } from 'lucide-react';
 import { ForwardRefExoticComponent, RefAttributes, useState } from 'react';
 
@@ -15,6 +15,8 @@ interface LinkItem {
   icon: ForwardRefExoticComponent<Omit<LucideProps, "ref"> & RefAttributes<SVGSVGElement>>,
   isExternal?: boolean
   adminOnly?: boolean
+  /** Visible para ADMIN y MECHANIC; oculto para VIEWER */
+  staffOnly?: boolean
   mechanicHideMasters?: boolean
 }
 
@@ -24,6 +26,7 @@ const baseNavItems: LinkItem[] = [
   { name: 'Clientes', href: '/dashboard/clients', icon: Users, adminOnly: true },
   { name: 'Órdenes de Trabajo', href: '/dashboard/interventions', icon: Wrench },
   { name: 'Abrir OT', href: '/dashboard/interventions/new', icon: PlusCircle },
+  { name: 'Turnos', href: '/dashboard/turnos', icon: CalendarDays, staffOnly: true },
   { name: 'Configuración', href: '/dashboard/settings', icon: Cog, adminOnly: true },
 ];
 
@@ -42,9 +45,14 @@ export default function Sidebar() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const isAdmin = session?.user?.role === 'ADMIN';
+  const isStaff = session?.user?.role === 'ADMIN' || session?.user?.role === 'MECHANIC';
 
   let navItems: LinkItem[] = [
-    ...baseNavItems.filter((item) => !item.adminOnly || isAdmin),
+    ...baseNavItems.filter((item) => {
+      if (item.adminOnly && !isAdmin) return false;
+      if (item.staffOnly && !isStaff) return false;
+      return true;
+    }),
     ...externalNavItems,
     { name: 'Mi Perfil', href: '/dashboard/profile', icon: User },
   ];

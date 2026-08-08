@@ -10,6 +10,7 @@ const routeRules: { prefix: string; roles: Role[] }[] = [
   { prefix: '/dashboard/settings', roles: ['ADMIN'] },
   { prefix: '/dashboard/cars', roles: ['ADMIN'] },
   { prefix: '/dashboard/clients', roles: ['ADMIN'] },
+  { prefix: '/dashboard/turnos', roles: ['ADMIN', 'MECHANIC'] },
   { prefix: '/dashboard/interventions', roles: ['ADMIN', 'MECHANIC', 'VIEWER'] },
   { prefix: '/dashboard/profile', roles: ['ADMIN', 'MECHANIC', 'VIEWER'] },
   { prefix: '/dashboard', roles: ['ADMIN', 'MECHANIC', 'VIEWER'] },

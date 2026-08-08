@@ -31,6 +31,7 @@ model User {
   sessions         Session[]
   interventions    Intervention[] @relation("PerformedBy")
   cancelRequests   Intervention[] @relation("CancelRequestedBy")
+  appointments     Appointment[]  @relation("AppointmentCreatedBy")
   passwordHash     String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -107,6 +108,7 @@ model Car {
 
   ownershipHistory CarOwnership[]
   interventions    Intervention[]
+  appointments     Appointment[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -168,6 +170,9 @@ model Intervention {
 
   items InterventionItem[]
 
+  /// Turno confirmado del que nació esta OT (si se abrió desde la agenda)
+  appointment Appointment?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -175,6 +180,66 @@ model Intervention {
   @@index([clientId])
   @@index([performedById])
   @@index([cancelRequestedById])
+  @@index([dateOfIntervention])
+}
+
+enum AppointmentStatus {
+  PENDIENTE
+  PROPUESTA_ENVIADA
+  CONFIRMADO
+}
+
+enum AppointmentSource {
+  MANUAL
+  WHATSAPP
+}
+
+model Appointment {
+  id           String             @id @default(uuid())
+  startsAt     DateTime
+  endsAt       DateTime?
+  clientName   String
+  clientPhone  String?
+  /// Avería / motivo del turno (WhatsApp lo guarda acá)
+  notes        String?
+  /// Dominio informado (con o sin auto existente en el sistema)
+  licensePlate String?
+  carId        String?
+  car          Car?               @relation(fields: [carId], references: [id], onDelete: SetNull)
+  status       AppointmentStatus  @default(PENDIENTE)
+  source       AppointmentSource  @default(MANUAL)
+  whatsappWaId String?
+  /// ISO datetime strings offered by staff when status is PROPUESTA_ENVIADA
+  proposedSlots Json?
+  /// OT abierta a partir de este turno (solo turnos CONFIRMADO)
+  interventionId String?       @unique
+  intervention   Intervention? @relation(fields: [interventionId], references: [id], onDelete: SetNull)
+  createdById  String
+  createdBy    User               @relation("AppointmentCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([startsAt])
+  @@index([status, createdAt])
+  @@index([status, startsAt])
+  @@index([createdById])
+  @@index([whatsappWaId])
+  @@index([carId])
+  @@index([licensePlate])
+}
+
+/// Conversación FSM del bot de WhatsApp (alta de turnos)
+model WhatsAppConversation {
+  id            String    @id @default(uuid())
+  waId          String    @unique
+  step          String    @default("IDLE")
+  draftName     String?
+  draftIssue    String?
+  draftPlate    String?
+  draftCarId    String?
+  draftStartsAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 }
 
 model InterventionItem {
@@ -198,6 +263,16 @@ model InterventionItem {
 model WorkshopSettings {
   id         String   @id @default("default")
   hourlyRate Decimal  @default(0.00) @db.Decimal(10, 2)
+
+  /// Días y horarios de atención: solo se aceptan turnos dentro de estos rangos.
+  /// Horas en formato HH:mm (hora local del taller).
+  worksSaturday       Boolean @default(false)
+  worksSunday         Boolean @default(false)
+  openingTime         String  @default("08:00")
+  closingTime         String  @default("18:00")
+  saturdayOpeningTime String  @default("08:00")
+  saturdayClosingTime String  @default("13:00")
+
   updatedAt  DateTime @updatedAt
   createdAt  DateTime @default(now())
 }
