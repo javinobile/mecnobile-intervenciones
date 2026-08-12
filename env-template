@@ -1,6 +1,7 @@
 # Usado por Prisma CLI y por Docker Compose (env_file / ${VARS}).
 # Para next dev también podés usar .env.local.
 # En el VPS: este mismo archivo `.env` con NEXTAUTH_URL de producción.
+# Plantilla: copiá a `.env` o mirá `.env.example`.
 
 # Zona horaria del taller (si falta, el contenedor usa UTC y los turnos salen corridos)
 TZ=America/Argentina/Buenos_Aires
@@ -16,14 +17,27 @@ AUTH_SECRET=
 NEXTAUTH_SECRET=
 
 # --- Meta WhatsApp Cloud API ---
-META_APP_ID=your_meta_app_id
-META_APP_SECRET=your_meta_app_secret
-WHATSAPP_ACCESS_TOKEN=your_whatsapp_access_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-WHATSAPP_BUSINESS_ACCOUNT_ID=your_waba_id
+META_APP_ID=
+META_APP_SECRET=
+WHATSAPP_ACCESS_TOKEN=
+WHATSAPP_PHONE_NUMBER_ID=
+WHATSAPP_BUSINESS_ACCOUNT_ID=
 WHATSAPP_API_VERSION=v21.0
-WHATSAPP_VERIFY_TOKEN=your_custom_verify_token
-# Plantilla utilidad turno_confirmado: {{1}} nombre, {{2}} fecha, {{3}} hora
+WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_TEMPLATE_TURNO_CONFIRMADO=turno_confirmado
 WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS=turno_alternativas
 WHATSAPP_TEMPLATE_LANGUAGE=es_AR
+
+# --- Groq (consulta *estado* por WhatsApp; opcional) ---
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
+
+# --- SMTP / Mailgun (historial PDF por email al autorizar solicitud WhatsApp) ---
+# Ejemplo Mailgun: SMTP_HOST=smtp.mailgun.org  SMTP_PORT=587  SMTP_SECURE=false
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=
+SMTP_PASS=
+# Debe usar el dominio verificado en Mailgun, ej: Nóbile <historial@mg.tudominio.com>
+SMTP_FROM=

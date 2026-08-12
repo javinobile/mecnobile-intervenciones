@@ -1,9 +1,12 @@
 // app/dashboard/cars/[id]/page.tsx
 import { notFound } from 'next/navigation';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/auth';
 import { getCarDetails } from '@/actions/car.actions';
 import Link from 'next/link';
 import { Car, User, Settings, FileText, PlusCircle, Calendar } from 'lucide-react';
 import CarEditForm from '@/components/cars/CarEditForm';
+import CarHistoryPdfButton from '@/components/cars/CarHistoryPdfButton';
 
 interface CarDetailPageProps {
     params: {
@@ -31,6 +34,9 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
     if (!details) {
         return notFound();
     }
+
+    const session = await getServerSession(authOptions);
+    const isAdmin = session?.user?.role === 'ADMIN';
 
     const { car, currentOwner, interventions } = details;
 
@@ -61,8 +67,9 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
                 <div className="flex space-x-3">
 
                     {/* BOTÓN 1: EDITAR VEHÍCULO */}
-                    {/* El componente CarEditForm ya incluye el botón y el modal. */}
                     <CarEditForm car={carDetailsForEdit} />
+
+                    {isAdmin ? <CarHistoryPdfButton carId={car.id} /> : null}
 
                     {/* BOTÓN 2: ABRIR NUEVA OT */}
                     <Link href={`/dashboard/interventions/new?carId=${car.id}`} className="flex items-center px-4 py-2 bg-purple-600 text-white font-medium rounded-lg shadow-md hover:bg-purple-700 transition duration-150">

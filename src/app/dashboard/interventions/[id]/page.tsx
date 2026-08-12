@@ -92,6 +92,7 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                             initialNotes={intervention.notes}
                             initialDescription={intervention.description}
                             initialMileageKm={intervention.mileageKm}
+                            initialEstimatedReadyAt={intervention.estimatedReadyAt}
                             canEditContent={intervention.canEditContent}
                             canClose={intervention.canClose}
                             canRequestCancel={intervention.canRequestCancel}

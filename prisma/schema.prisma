@@ -32,6 +32,7 @@ model User {
   interventions    Intervention[] @relation("PerformedBy")
   cancelRequests   Intervention[] @relation("CancelRequestedBy")
   appointments     Appointment[]  @relation("AppointmentCreatedBy")
+  historyReviews   CarHistoryRequest[] @relation("HistoryReviewedBy")
   passwordHash     String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -87,6 +88,7 @@ model Client {
   address          String?
   ownedCarsHistory CarOwnership[]
   interventions    Intervention[]
+  historyRequests  CarHistoryRequest[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -109,6 +111,7 @@ model Car {
   ownershipHistory CarOwnership[]
   interventions    Intervention[]
   appointments     Appointment[]
+  historyRequests  CarHistoryRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -150,6 +153,9 @@ model Intervention {
 
   status             InterventionStatus @default(ABIERTA)
   dateOfIntervention DateTime           @default(now())
+
+  /// Fecha/hora probable de entrega (opcional; solo informativa para el cliente vía WhatsApp)
+  estimatedReadyAt DateTime?
 
   carId String
   car   Car    @relation(fields: [carId], references: [id], onDelete: Restrict)
@@ -240,6 +246,36 @@ model WhatsAppConversation {
   draftStartsAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+}
+
+enum CarHistoryRequestStatus {
+  PENDIENTE
+  APROBADA
+  RECHAZADA
+  ENVIADA
+}
+
+/// Solicitud de historial del vehículo por WhatsApp (PDF por email, solo ADMIN aprueba)
+model CarHistoryRequest {
+  id           String                  @id @default(uuid())
+  carId        String
+  car          Car                     @relation(fields: [carId], references: [id], onDelete: Cascade)
+  clientId     String?
+  client       Client?                 @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  whatsappWaId String
+  email        String
+  status       CarHistoryRequestStatus @default(PENDIENTE)
+  reviewedById String?
+  reviewedBy   User?                   @relation("HistoryReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt   DateTime?
+  sentAt       DateTime?
+  rejectReason String?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+
+  @@index([status, createdAt])
+  @@index([carId])
+  @@index([whatsappWaId])
 }
 
 model InterventionItem {

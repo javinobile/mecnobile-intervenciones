@@ -53,6 +53,16 @@ services:
       WHATSAPP_TEMPLATE_TURNO_CONFIRMADO: ${WHATSAPP_TEMPLATE_TURNO_CONFIRMADO:-turno_confirmado}
       WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS: ${WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS:-turno_alternativas}
       WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-es_AR}
+      # Groq (opcional): reescribe el estado de OT en tono coloquial
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      # SMTP para enviar historial PDF (autorización admin)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     depends_on:
       - db
 

@@ -105,10 +105,32 @@ Pasos: `AWAIT_ISSUE` → `AWAIT_PLATE` → (`AWAIT_NAME`) → `AWAIT_DATE` → `
 | Comando | Efecto |
 |---------|--------|
 | `turno` / `hola` | Empieza (o reinicia) el pedido |
+| `estado` | Estado de la OT abierta del auto (identifica por este WhatsApp) |
+| `historial` | Solicita historial PDF del auto (email → admin autoriza) |
+| `estado AA123BB` | Igual, forzando dominio si tenés más de un auto |
 | `reiniciar` | Borra solo el pedido a medias; **no** toca turnos ya creados |
 | `cambiar fecha` | En el paso de la hora, vuelve a preguntar el día |
 | `cancelar` | Cancela el turno activo de ese WhatsApp (si hay varios: `cancelar 1`) |
 | `ayuda` | Lista comandos |
+
+### Consulta de estado (`estado`)
+
+1. Se toma el **número del chat**.
+2. Se buscan solo vehículos con OT **ABIERTA** ligados a ese teléfono/turnos (autos sin OT se ignoran).
+3. Si hay **una** OT abierta → responde el progreso.
+4. Si hay **más de un auto con OT abierta** → pide el *dominio* (o el número de la lista).
+5. Atajo: `estado AA123BB` / `estado JSB-555`.
+6. Texto con **Groq** (`GROQ_API_KEY`) en tono del taller → cliente; si falla o no hay key, plantilla con descripción + ítems.
+7. La **fecha/hora estimada de entrega** es opcional en la OT abierta (`estimatedReadyAt`). Si el mecánico la carga, el mensaje de *estado* la incluye; si no, se informa que todavía no hay horario confirmado.
+
+### Historial del vehículo (`historial`)
+
+1. Cliente escribe *historial* (mismo WhatsApp del cliente).
+2. Si hay varios autos con OT → pide dominio.
+3. Pide un *email* de destino.
+4. Se crea una solicitud **PENDIENTE** (solo un ADMIN puede autorizar en Dashboard → Solicitudes historial).
+5. Al autorizar: se genera el PDF (sin precios), se envía por SMTP, se guarda el email en la ficha del cliente y se avisa por WhatsApp.
+6. El ADMIN también puede imprimir el historial desde la ficha del vehículo (sin WhatsApp).
 
 Fecha y hora se piden **por separado** y en lenguaje natural:
 

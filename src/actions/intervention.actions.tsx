@@ -18,20 +18,7 @@ import { revalidatePath } from "next/cache";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { OtComprobantePdf, PdfData } from '@/components/interventions/OtComprbantePdf';
 import { Decimal } from "../../generated/prisma/runtime/library";
-
-import * as fs from 'fs';
-import * as path from 'path';
-
-const getLogoBase64 = () => {
-    try {
-        const logoPath = path.join(process.cwd(), 'public', 'images', 'logo-taller.png');
-        const fileBuffer = fs.readFileSync(logoPath);
-        return `data:image/png;base64,${fileBuffer.toString('base64')}`;
-    } catch (error) {
-        console.error("Error al cargar el logo en el servidor:", error);
-        return null;
-    }
-};
+import { getLogoBase64 } from '@/lib/pdf-logo';
 
 export interface InterventionListItem {
     id: string;
@@ -925,6 +912,7 @@ export async function getInterventionDetail(id: string) {
             cancelRequestedAt: intervention.cancelRequestedAt,
             displayStatus,
             dateOfIntervention: intervention.dateOfIntervention,
+            estimatedReadyAt: intervention.estimatedReadyAt,
             carId: intervention.carId,
             clientId: intervention.clientId,
             performedById: intervention.performedById,
@@ -974,6 +962,8 @@ interface UpdateInterventionData {
     notes?: string;
     description?: string;
     mileageKm?: string;
+    /** ISO local `YYYY-MM-DDTHH:mm` o string vacío para limpiar */
+    estimatedReadyAt?: string;
 }
 
 function canMutateOt(
@@ -1039,6 +1029,18 @@ export async function updateIntervention(data: UpdateInterventionData): Promise<
                     return { success: false, message: 'Kilometraje inválido.' };
                 }
                 updateData.mileageKm = km;
+            }
+            if (data.estimatedReadyAt !== undefined) {
+                const raw = data.estimatedReadyAt.trim();
+                if (!raw) {
+                    updateData.estimatedReadyAt = null;
+                } else {
+                    const parsed = new Date(raw);
+                    if (Number.isNaN(parsed.getTime())) {
+                        return { success: false, message: 'Fecha/hora de entrega inválida.' };
+                    }
+                    updateData.estimatedReadyAt = parsed;
+                }
             }
         }
 

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import {
   Car, Users, User, LogOut, Home, User2, History,
-  LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays
+  LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays, FileText
 } from 'lucide-react';
 import { ForwardRefExoticComponent, RefAttributes, useState } from 'react';
 
@@ -27,6 +27,7 @@ const baseNavItems: LinkItem[] = [
   { name: 'Órdenes de Trabajo', href: '/dashboard/interventions', icon: Wrench },
   { name: 'Abrir OT', href: '/dashboard/interventions/new', icon: PlusCircle },
   { name: 'Turnos', href: '/dashboard/turnos', icon: CalendarDays, staffOnly: true },
+  { name: 'Solicitudes historial', href: '/dashboard/historial-solicitudes', icon: FileText, adminOnly: true },
   { name: 'Configuración', href: '/dashboard/settings', icon: Cog, adminOnly: true },
 ];
 

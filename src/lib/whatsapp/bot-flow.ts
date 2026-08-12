@@ -1,7 +1,7 @@
 import prisma from '../../../lib/prisma';
 import { Prisma } from '../../../generated/prisma';
 import { findCarIdByNormalizedPlateExact } from '../../../lib/plate-search';
-import { validateNewLicensePlate } from '../../../lib/utils';
+import { normalizeLicensePlate, validateNewLicensePlate } from '../../../lib/utils';
 import {
     checkSlotWithinSchedule,
     describeDayHours,
@@ -12,6 +12,17 @@ import {
 } from '../workshop-schedule';
 import { WHATSAPP_BOT_EMAIL } from './config';
 import { notifyAppointmentConfirmed, sendTextMessage, SLOT_BUTTON_PREFIX } from './meta-client';
+import {
+    buildOtStatusReply,
+    findCarsWithOpenOtForWhatsApp,
+    formatCarChoiceList,
+    type StatusCar,
+} from './ot-status';
+import {
+    createPendingHistoryRequest,
+    findCarsWithHistoryForWhatsApp,
+    isValidEmail,
+} from './car-history-flow';
 import {
     combineDateAndTime,
     formatDateTimeEsAr,
@@ -46,12 +57,76 @@ const CHANGE_DATE_WORDS = new Set([
     'cambiar el día',
 ]);
 
+/** Menú global de palabras clave (siempre disponible). */
 const HELP_HINT =
-    `Podés escribir:\n` +
+    `*Palabras clave*\n` +
     `• *turno* — pedir un turno\n` +
-    `• *reiniciar* — empezar de cero (borra el pedido a medias)\n` +
+    `• *estado* — cómo va tu auto en el taller\n` +
+    `• *historial* — pedir el historial del auto por email\n` +
     `• *cancelar* — cancelar un turno pendiente o confirmado\n` +
-    `• *ayuda* — ver estas opciones`;
+    `• *reiniciar* — empezar de cero (borra el pedido a medias)\n` +
+    `• *ayuda* — ver este menú`;
+
+/** Pie de mensaje con lo que se puede escribir en el paso actual. */
+function stepHint(step: string): string {
+    switch (step) {
+        case 'AWAIT_ISSUE':
+            return (
+                `_Ahora: contame la avería o el trabajo.\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_PLATE':
+            return (
+                `_Ahora: el *dominio* sin guiones (*ABC123* o *AA123BB*).\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_NAME':
+            return (
+                `_Ahora: tu *nombre y apellido*.\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_DATE':
+            return (
+                `_Ahora: el *día* (*hoy*, *mañana*, *15/8*…).\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_TIME':
+            return (
+                `_Ahora: la *hora* (*16*, *16:30*, *4 de la tarde*…).\n` +
+                `También: *cambiar fecha* · *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_STATUS_PLATE':
+            return (
+                `_Ahora: el *dominio* o el número de la lista (1, 2…).\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_HISTORY_PLATE':
+            return (
+                `_Ahora: el *dominio* del auto para el historial (o el número de la lista).\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        case 'AWAIT_HISTORY_EMAIL':
+            return (
+                `_Ahora: el *email* donde querés recibir el PDF.\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
+        default:
+            return `_Escribí *turno*, *estado*, *historial*, *cancelar* o *ayuda*_`;
+    }
+}
+
+function withStepHint(body: string, step: string): string {
+    return `${body.trim()}\n\n${stepHint(step)}`;
+}
+
+function helpForStep(step: string): string {
+    if (!step || step === 'IDLE') return HELP_HINT;
+    return (
+        `Estás en medio de una consulta.\n\n` +
+        `${stepHint(step)}\n\n` +
+        `${HELP_HINT}`
+    );
+}
 
 const RESTART_WORDS = new Set([
     'reiniciar',
@@ -68,6 +143,74 @@ const START_WORDS = new Set(['turno', 'hola', 'buenas', 'buen dia', 'buen día',
 const CANCEL_WORDS = new Set(['cancelar', 'cancelar turno', 'anular', 'anular turno']);
 
 const HELP_WORDS = new Set(['ayuda', 'help', 'opciones', '?']);
+
+/** Consulta de estado de OT (identifica por este WhatsApp). */
+const STATUS_WORDS = new Set([
+    'estado',
+    'estado del auto',
+    'estado auto',
+    'como va',
+    'cómo va',
+    'como esta',
+    'cómo está',
+    'como esta mi auto',
+    'cómo está mi auto',
+    'como va mi auto',
+    'cómo va mi auto',
+    'mi auto',
+    'consulta',
+    'consultar',
+]);
+
+const HISTORY_WORDS = new Set([
+    'historial',
+    'historial del auto',
+    'historial auto',
+    'pedir historial',
+    'solicitar historial',
+    'historia del auto',
+    'historia',
+]);
+
+/** Normaliza texto de WA para keywords (quita *negrita*, signos, acentos). */
+function normalizeBotKeyword(text: string): string {
+    return text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[*_~`•·]+/g, ' ')
+        .replace(/[¿?¡!.,;:"'“”‘’]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Detecta pedido de historial: "historial", "*Historial*", "quiero el historial", etc.
+ * Opcional: "historial ABC123".
+ */
+function parseHistoryIntent(text: string): { hit: boolean; plate?: string } {
+    const lower = normalizeBotKeyword(text);
+    if (!lower) return { hit: false };
+
+    const plateSuffix = lower.match(
+        /^(?:historial|historia)(?:\s+del?\s+auto)?\s+([a-z0-9-]{6,10})$/
+    );
+    if (plateSuffix) return { hit: true, plate: plateSuffix[1] };
+
+    if (HISTORY_WORDS.has(lower)) return { hit: true };
+
+    // Frases naturales / menú copiado
+    if (
+        /(?:^|\s)(?:el\s+)?historial(?:\s|$)/.test(lower) ||
+        /^(?:quiero|pedime|pedir|solicitar|necesito|mandame|manda|envia|enviame)\s+(?:el\s+)?historial/.test(
+            lower
+        )
+    ) {
+        return { hit: true };
+    }
+
+    return { hit: false };
+}
 
 async function getOrCreateBotUserId(): Promise<string> {
     const existing = await prisma.user.findUnique({
@@ -152,7 +295,7 @@ async function expireConversationIfStale(
         waId,
         `Se cerró el pedido a medias por falta de respuesta (más de 30 minutos).\n` +
             `No se generó ningún turno.\n\n` +
-            `Escribí *turno* cuando quieras empezar de nuevo.`
+            `${HELP_HINT}`
     );
     return true;
 }
@@ -198,6 +341,320 @@ async function findClientAppointments(waId: string) {
     });
 }
 
+function pickStatusCarByPlate(cars: StatusCar[], plateRaw: string): StatusCar | null {
+    const normalized = normalizeLicensePlate(plateRaw);
+    if (!normalized) return null;
+    return (
+        cars.find((c) => normalizeLicensePlate(c.licensePlate) === normalized) ?? null
+    );
+}
+
+async function sendOtStatusForCar(waId: string, car: StatusCar) {
+    await clearDrafts(waId);
+    const reply = await buildOtStatusReply(car);
+    await sendTextMessage(
+        waId,
+        `${reply}\n\n` +
+            `_Si necesitás otra cosa: *turno* · *estado* · *cancelar* · *ayuda*_`
+    );
+}
+
+/**
+ * Estado del auto: WhatsApp del chat → solo autos con OT ABIERTA.
+ * Si hay más de uno con OT abierta, pide el dominio.
+ */
+async function tryHandleStatus(waId: string, text: string): Promise<boolean> {
+    const lower = text.toLowerCase().trim();
+    // Acepta dominio con o sin guiones: estado JSB555 / estado JSB-555
+    const plateSuffix = lower.match(/^(?:estado|consultar?)\s+([a-z0-9-]{6,10})$/i);
+
+    if (!STATUS_WORDS.has(lower) && !plateSuffix) {
+        return false;
+    }
+
+    const cars = await findCarsWithOpenOtForWhatsApp(waId);
+    if (cars.length === 0) {
+        await clearDrafts(waId);
+        await sendTextMessage(
+            waId,
+            `No encontré *órdenes abiertas* asociadas a este número.\n` +
+                `Tiene que ser el WhatsApp del cliente cargado en el taller, ` +
+                `y el auto tiene que tener una OT *ABIERTA*.\n\n${HELP_HINT}`
+        );
+        return true;
+    }
+
+    if (plateSuffix) {
+        const car = pickStatusCarByPlate(cars, plateSuffix[1]);
+        if (!car) {
+            await sendTextMessage(
+                waId,
+                `Ese dominio no tiene OT abierta con este número.\n` +
+                    `Autos en taller ahora:\n${formatCarChoiceList(cars)}\n\n` +
+                    withStepHint(
+                        `Escribí el *dominio* o *estado AA123BB*.`,
+                        'AWAIT_STATUS_PLATE'
+                    )
+            );
+            return true;
+        }
+        await sendOtStatusForCar(waId, car);
+        return true;
+    }
+
+    if (cars.length === 1) {
+        await sendOtStatusForCar(waId, cars[0]);
+        return true;
+    }
+
+    await prisma.whatsAppConversation.upsert({
+        where: { waId },
+        create: { waId, step: 'AWAIT_STATUS_PLATE' },
+        update: {
+            step: 'AWAIT_STATUS_PLATE',
+            draftName: null,
+            draftIssue: null,
+            draftPlate: null,
+            draftCarId: null,
+            draftStartsAt: null,
+        },
+    });
+
+    await sendTextMessage(
+        waId,
+        withStepHint(
+            `Tenés *más de un auto con OT abierta* en este número.\n` +
+                `¿De cuál querés el estado? Escribí el *dominio* o el número:\n\n` +
+                `${formatCarChoiceList(cars)}`,
+            'AWAIT_STATUS_PLATE'
+        )
+    );
+    return true;
+}
+
+async function handleAwaitStatusPlate(waId: string, text: string): Promise<void> {
+    const cars = await findCarsWithOpenOtForWhatsApp(waId);
+    if (cars.length === 0) {
+        await clearDrafts(waId);
+        await sendTextMessage(
+            waId,
+            `No encontré órdenes abiertas asociadas a este número.\n\n${HELP_HINT}`
+        );
+        return;
+    }
+
+    const indexMatch = text.trim().match(/^(\d+)$/);
+    if (indexMatch) {
+        const idx = parseInt(indexMatch[1], 10) - 1;
+        if (idx >= 0 && idx < cars.length) {
+            await sendOtStatusForCar(waId, cars[idx]);
+            return;
+        }
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `Número inválido. Elegí del 1 al ${cars.length}, o escribí el dominio.`,
+                'AWAIT_STATUS_PLATE'
+            )
+        );
+        return;
+    }
+
+    const plate = normalizeLicensePlate(text);
+    const car = pickStatusCarByPlate(cars, plate);
+    if (!car) {
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `No entendí ese dominio.\n` +
+                    `Autos en taller:\n${formatCarChoiceList(cars)}`,
+                'AWAIT_STATUS_PLATE'
+            )
+        );
+        return;
+    }
+
+    await sendOtStatusForCar(waId, car);
+}
+
+async function askHistoryEmail(waId: string, car: StatusCar) {
+    await prisma.whatsAppConversation.upsert({
+        where: { waId },
+        create: {
+            waId,
+            step: 'AWAIT_HISTORY_EMAIL',
+            draftCarId: car.id,
+            draftPlate: car.licensePlate,
+        },
+        update: {
+            step: 'AWAIT_HISTORY_EMAIL',
+            draftCarId: car.id,
+            draftPlate: car.licensePlate,
+            draftName: null,
+            draftIssue: null,
+            draftStartsAt: null,
+        },
+    });
+    await sendTextMessage(
+        waId,
+        withStepHint(
+            `Perfecto: historial de *${car.licensePlate}*.\n\n` +
+                `Un *administrador* del taller tiene que autorizar el envío.\n` +
+                `¿A qué *email* te lo mandamos? (ese mail queda registrado en tu ficha de cliente)`,
+            'AWAIT_HISTORY_EMAIL'
+        )
+    );
+}
+
+/**
+ * Historial del auto: WhatsApp → autos del teléfono → (placa si hay varios) → email → PENDIENTE.
+ */
+async function tryHandleHistory(waId: string, text: string): Promise<boolean> {
+    const intent = parseHistoryIntent(text);
+    if (!intent.hit) {
+        return false;
+    }
+
+    // Busca autos asociados a este WhatsApp (dueño / OT / turnos) con historial de taller
+    const cars = await findCarsWithHistoryForWhatsApp(waId);
+    if (cars.length === 0) {
+        await clearDrafts(waId);
+        await sendTextMessage(
+            waId,
+            `No encontré *autos con historial* asociados a este WhatsApp.\n` +
+                `Tiene que ser el número del cliente en el taller, y el auto tiene que tener OT abierta o cerrada.\n\n` +
+                `${HELP_HINT}`
+        );
+        return true;
+    }
+
+    if (intent.plate) {
+        const car = pickStatusCarByPlate(cars, intent.plate);
+        if (!car) {
+            await sendTextMessage(
+                waId,
+                withStepHint(
+                    `Ese dominio no tiene historial con este número.\n` +
+                        `Tus autos:\n${formatCarChoiceList(cars)}`,
+                    'AWAIT_HISTORY_PLATE'
+                )
+            );
+            return true;
+        }
+        await askHistoryEmail(waId, car);
+        return true;
+    }
+
+    if (cars.length === 1) {
+        await askHistoryEmail(waId, cars[0]);
+        return true;
+    }
+
+    await prisma.whatsAppConversation.upsert({
+        where: { waId },
+        create: { waId, step: 'AWAIT_HISTORY_PLATE' },
+        update: {
+            step: 'AWAIT_HISTORY_PLATE',
+            draftName: null,
+            draftIssue: null,
+            draftPlate: null,
+            draftCarId: null,
+            draftStartsAt: null,
+        },
+    });
+
+    await sendTextMessage(
+        waId,
+        withStepHint(
+            `Tenés *${cars.length}* autos asociados a este número.\n` +
+                `¿De cuál querés el historial? Escribí el *dominio* o el número de la lista:\n\n` +
+                `${formatCarChoiceList(cars)}`,
+            'AWAIT_HISTORY_PLATE'
+        )
+    );
+    return true;
+}
+
+async function handleAwaitHistoryPlate(waId: string, text: string): Promise<void> {
+    const cars = await findCarsWithHistoryForWhatsApp(waId);
+    if (cars.length === 0) {
+        await clearDrafts(waId);
+        await sendTextMessage(waId, `No encontré historial para este número.\n\n${HELP_HINT}`);
+        return;
+    }
+
+    const indexMatch = text.trim().match(/^(\d+)$/);
+    if (indexMatch) {
+        const idx = parseInt(indexMatch[1], 10) - 1;
+        if (idx >= 0 && idx < cars.length) {
+            await askHistoryEmail(waId, cars[idx]);
+            return;
+        }
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `Número inválido. Elegí del 1 al ${cars.length}, o escribí el dominio.`,
+                'AWAIT_HISTORY_PLATE'
+            )
+        );
+        return;
+    }
+
+    const car = pickStatusCarByPlate(cars, normalizeLicensePlate(text));
+    if (!car) {
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `No entendí ese dominio.\nAutos:\n${formatCarChoiceList(cars)}`,
+                'AWAIT_HISTORY_PLATE'
+            )
+        );
+        return;
+    }
+    await askHistoryEmail(waId, car);
+}
+
+async function handleAwaitHistoryEmail(waId: string, text: string): Promise<void> {
+    const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
+    if (!conv?.draftCarId) {
+        await clearDrafts(waId);
+        await sendTextMessage(waId, `Se perdió el auto elegido.\n\n${HELP_HINT}`);
+        return;
+    }
+
+    if (!isValidEmail(text)) {
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `Ese email no parece válido. Ejemplo: *juan@correo.com*`,
+                'AWAIT_HISTORY_EMAIL'
+            )
+        );
+        return;
+    }
+
+    const result = await createPendingHistoryRequest({
+        waId,
+        carId: conv.draftCarId,
+        email: text,
+    });
+
+    await clearDrafts(waId);
+
+    if (!result.ok) {
+        await sendTextMessage(waId, `${result.message}\n\n${HELP_HINT}`);
+        return;
+    }
+
+    await sendTextMessage(
+        waId,
+        `Listo. Pedimos el historial de *${result.plate}* para *${text.trim().toLowerCase()}*.\n\n` +
+            `Quedó *pendiente de autorización* de un administrador del taller.\n` +
+            `Cuando lo aprueben, te llega el PDF a ese correo y te avisamos por este chat.\n\n` +
+            `${HELP_HINT}`
+    );
+}
+
 /** Cancelar turno existente identificado por el teléfono del chat. */
 async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
     const lower = text.toLowerCase().trim();
@@ -219,7 +676,11 @@ async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
     if (pickMatch) {
         const idx = parseInt(pickMatch[1], 10) - 1;
         if (idx < 0 || idx >= appointments.length) {
-            await sendTextMessage(waId, `Número inválido. Usá *cancelar 1*, *cancelar 2*, etc.`);
+            await sendTextMessage(
+                waId,
+                `Número inválido. Usá *cancelar 1*, *cancelar 2*, etc.\n\n` +
+                    `_También: *ayuda*_`
+            );
             return true;
         }
         const ap = appointments[idx];
@@ -230,7 +691,7 @@ async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
             waId,
             `Listo. Cancelamos el turno de *${full}*` +
                 (ap.licensePlate ? ` (dominio ${ap.licensePlate})` : '') +
-                `.\n\nEscribí *turno* si querés pedir otro.`
+                `.\n\n${HELP_HINT}`
         );
         return true;
     }
@@ -244,7 +705,7 @@ async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
             waId,
             `Listo. Cancelamos tu turno de *${full}*` +
                 (ap.licensePlate ? ` (dominio ${ap.licensePlate})` : '') +
-                `.\n\nEscribí *turno* si querés pedir otro.`
+                `.\n\n${HELP_HINT}`
         );
         return true;
     }
@@ -256,7 +717,9 @@ async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
     });
     await sendTextMessage(
         waId,
-        `Tenés más de un turno. Respondé *cancelar N* con el número:\n\n${lines.join('\n')}`
+        `Tenés más de un turno. Respondé *cancelar N* con el número:\n\n` +
+            `${lines.join('\n')}\n\n` +
+            `_También: *reiniciar* · *ayuda*_`
     );
     return true;
 }
@@ -296,28 +759,37 @@ async function tryHandleProposalChoice(
             RESTART_WORDS.has(lower) ||
             CANCEL_WORDS.has(lower) ||
             START_WORDS.has(lower) ||
-            HELP_WORDS.has(lower)
+            HELP_WORDS.has(lower) ||
+            STATUS_WORDS.has(lower) ||
+            parseHistoryIntent(text).hit
         ) {
             return false;
         }
         await sendTextMessage(
             waId,
             `Para elegir un horario, tocá uno de los botones que te enviamos.\n` +
-                `Si no te aparecen, respondé con el número de la opción (1${slots.length > 1 ? ` a ${slots.length}` : ''}).\n` +
-                `También podés escribir *cancelar* o *reiniciar*.`
+                `Si no te aparecen, respondé con el número de la opción (1${slots.length > 1 ? ` a ${slots.length}` : ''}).\n\n` +
+                `_También: *cancelar* · *reiniciar* · *ayuda*_`
         );
         return true;
     }
 
     const index = buttonMatch !== null ? parseInt(choice, 10) : parseInt(choice, 10) - 1;
     if (Number.isNaN(index) || index < 0 || index >= slots.length) {
-        await sendTextMessage(waId, `Esa opción no está disponible. Elegí entre 1 y ${slots.length}.`);
+        await sendTextMessage(
+            waId,
+            `Esa opción no está disponible. Elegí entre 1 y ${slots.length}.\n\n` +
+                `_También: *cancelar* · *ayuda*_`
+        );
         return true;
     }
 
     const startsAt = new Date(slots[index]);
     if (Number.isNaN(startsAt.getTime())) {
-        await sendTextMessage(waId, 'Esa opción ya no es válida. Escribí *turno* para pedir uno nuevo.');
+        await sendTextMessage(
+            waId,
+            `Esa opción ya no es válida.\n\n${HELP_HINT}`
+        );
         return true;
     }
 
@@ -351,9 +823,11 @@ async function askForDate(waId: string, prefix?: string) {
     });
     await sendTextMessage(
         waId,
-        `${prefix ? `${prefix}\n\n` : ''}¿Qué *día* querés traer el auto al taller?\n\n` +
-            `${describeSchedule(schedule)}\n${DATE_HINT}\n\n` +
-            `_Si te equivocaste en algo, escribí *reiniciar*._`
+        withStepHint(
+            `${prefix ? `${prefix}\n\n` : ''}¿Qué *día* querés traer el auto al taller?\n\n` +
+                `${describeSchedule(schedule)}\n${DATE_HINT}`,
+            'AWAIT_DATE'
+        )
     );
 }
 
@@ -372,9 +846,11 @@ async function askForTime(waId: string, day: Date) {
     });
     await sendTextMessage(
         waId,
-        `Anotado: *${dayLabel}*.\n\n¿A qué *hora* te queda cómodo llegar?\n` +
-            `${hours ? `Ese día atendemos *${hours}*.\n` : ''}\n${TIME_HINT}\n\n` +
-            `_Si querés otro día, escribí *cambiar fecha*._`
+        withStepHint(
+            `Anotado: *${dayLabel}*.\n\n¿A qué *hora* te queda cómodo llegar?\n` +
+                `${hours ? `Ese día atendemos *${hours}*.\n` : ''}\n${TIME_HINT}`,
+            'AWAIT_TIME'
+        )
     );
 }
 
@@ -382,7 +858,10 @@ async function createPendingFromDraft(waId: string) {
     const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
     if (!conv?.draftIssue || !conv.draftPlate || !conv.draftStartsAt || !conv.draftName) {
         await clearDrafts(waId);
-        await sendTextMessage(waId, `Faltaban datos del pedido. Escribí *turno* para empezar de nuevo.`);
+        await sendTextMessage(
+            waId,
+            `Faltaban datos del pedido.\n\n${HELP_HINT}`
+        );
         return;
     }
 
@@ -393,7 +872,6 @@ async function createPendingFromDraft(waId: string) {
         data: {
             startsAt: conv.draftStartsAt,
             clientName: conv.draftName,
-            // Teléfono siempre capturado: identifica al cliente para cancelar / notificar
             clientPhone: phone,
             notes: conv.draftIssue,
             licensePlate: conv.draftPlate,
@@ -405,7 +883,6 @@ async function createPendingFromDraft(waId: string) {
         },
     });
 
-    // Draft descartado al instante: no quedan conversaciones a medias con turno ya creado
     await clearDrafts(waId);
 
     const { full } = formatDateTimeEsAr(conv.draftStartsAt);
@@ -416,19 +893,21 @@ async function createPendingFromDraft(waId: string) {
             `• Dominio: *${conv.draftPlate}*\n` +
             `• Avería: ${conv.draftIssue}\n` +
             `• Llegada: *${full}*\n\n` +
-            `Quedó *pendiente de confirmación* del taller. Te avisamos por este chat cuando se confirme.\n` +
-            `Si necesitás cancelarlo, escribí *cancelar*.`
+            `Quedó *pendiente de confirmación* del taller. Te avisamos por este chat cuando se confirme.\n\n` +
+            `${HELP_HINT}`
     );
 }
 
 /**
  * FSM: IDLE → AWAIT_ISSUE → AWAIT_PLATE → [AWAIT_NAME] → AWAIT_DATE → AWAIT_TIME → crea PENDIENTE
+ * Consulta: *estado* → (AWAIT_STATUS_PLATE si hay varios autos) → reporte OT abierta
  *
  * Reglas anti-datos colgados:
  * - Appointment solo se crea al final (drafts descartables).
  * - Timeout 30' limpia solo drafts.
  * - reiniciar limpia drafts sin tocar turnos ya creados.
  * - cancelar elimina turnos activos de ese WhatsApp.
+ * - estado identifica por este WhatsApp; si hay varios autos, pide dominio.
  */
 export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promise<void> {
     const waId = normalizeWaId(msg.from) || msg.from;
@@ -440,12 +919,22 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
 
     const lower = text.toLowerCase().trim();
 
+    // *ayuda* con contexto del paso actual (si hay conversación a medias)
     if (HELP_WORDS.has(lower)) {
-        await sendTextMessage(waId, HELP_HINT);
+        const convForHelp = await getOrCreateConversation(waId);
+        await sendTextMessage(waId, helpForStep(convForHelp.step));
         return;
     }
 
     if (await tryHandleCancel(waId, text)) {
+        return;
+    }
+
+    if (await tryHandleStatus(waId, text)) {
+        return;
+    }
+
+    if (await tryHandleHistory(waId, text)) {
         return;
     }
 
@@ -467,13 +956,28 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         await sendTextMessage(
             waId,
             `Listo, reiniciamos. No se guardó ningún pedido a medias.\n\n` +
-                `Escribí *turno* para comenzar otra vez.`
+                `${HELP_HINT}`
         );
         return;
     }
 
-    if (START_WORDS.has(lower) || conv.step === 'IDLE') {
-        // Cualquier mensaje en IDLE (o palabra de inicio) arranca pedido limpio
+    if (conv.step === 'AWAIT_STATUS_PLATE') {
+        await handleAwaitStatusPlate(waId, text);
+        return;
+    }
+
+    if (conv.step === 'AWAIT_HISTORY_PLATE') {
+        await handleAwaitHistoryPlate(waId, text);
+        return;
+    }
+
+    if (conv.step === 'AWAIT_HISTORY_EMAIL') {
+        await handleAwaitHistoryEmail(waId, text);
+        return;
+    }
+
+    // Solo *turno* / saludo arranca el pedido. En IDLE, si no se entiende → menú.
+    if (START_WORDS.has(lower)) {
         await clearDrafts(waId);
         await prisma.whatsAppConversation.update({
             where: { waId },
@@ -481,10 +985,21 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         });
         await sendTextMessage(
             waId,
-            `Hola, soy el asistente de *Nóbile*.\n` +
-                `Tu número queda registrado con este chat para avisos y cancelaciones.\n\n` +
-                `¿Qué *avería* o trabajo necesita el auto?\n\n` +
-                `_Si te equivocás, escribí *reiniciar*._`
+            withStepHint(
+                `Hola, soy el asistente de *Nóbile*.\n` +
+                    `Tu número queda registrado con este chat para avisos y cancelaciones.\n\n` +
+                    `${HELP_HINT}\n\n` +
+                    `¿Qué *avería* o trabajo necesita el auto?`,
+                'AWAIT_ISSUE'
+            )
+        );
+        return;
+    }
+
+    if (conv.step === 'IDLE') {
+        await sendTextMessage(
+            waId,
+            `No te entendí del todo.\n\n${HELP_HINT}`
         );
         return;
     }
@@ -497,11 +1012,13 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         });
         await sendTextMessage(
             waId,
-            `Gracias. Ahora enviá el *dominio* del auto *sin guiones*.\n` +
-                `Formatos válidos:\n` +
-                `• Viejo: *ABC123*\n` +
-                `• Mercosur: *AA123BB*\n\n` +
-                `_Si te equivocaste, *reiniciar*._`
+            withStepHint(
+                `Gracias. Ahora enviá el *dominio* del auto *sin guiones*.\n` +
+                    `Formatos válidos:\n` +
+                    `• Viejo: *ABC123*\n` +
+                    `• Mercosur: *AA123BB*`,
+                'AWAIT_PLATE'
+            )
         );
         return;
     }
@@ -511,9 +1028,12 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         if (!plateValidation.ok || !plateValidation.plate) {
             await sendTextMessage(
                 waId,
-                `${plateValidation.message || 'Dominio inválido.'}\n` +
-                    `Escribí solo la patente, sin guiones. Ej: *ABC123* o *AA123BB*.\n` +
-                    `_O escribí *reiniciar*._`
+                withStepHint(
+                    `No entendí el dominio.\n` +
+                        `${plateValidation.message || 'Dominio inválido.'}\n` +
+                        `Ejemplos: *ABC123* o *AA123BB* (sin guiones).`,
+                    'AWAIT_PLATE'
+                )
             );
             return;
         }
@@ -562,13 +1082,30 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         });
         await sendTextMessage(
             waId,
-            `¿Cuál es tu *nombre y apellido*?\n\n_Si te equivocaste, *reiniciar*._`
+            withStepHint(`¿Cuál es tu *nombre y apellido*?`, 'AWAIT_NAME')
         );
         return;
     }
 
     if (conv.step === 'AWAIT_NAME') {
         const name = text.slice(0, 120);
+        // Si escribió una keyword por error, no tomarla como nombre
+        if (
+            START_WORDS.has(lower) ||
+            STATUS_WORDS.has(lower) ||
+            parseHistoryIntent(text).hit ||
+            CANCEL_WORDS.has(lower) ||
+            RESTART_WORDS.has(lower)
+        ) {
+            await sendTextMessage(
+                waId,
+                withStepHint(
+                    `Necesito tu *nombre y apellido* para el turno (no una palabra clave).`,
+                    'AWAIT_NAME'
+                )
+            );
+            return;
+        }
         await prisma.whatsAppConversation.update({
             where: { waId },
             data: { draftName: name },
@@ -584,7 +1121,10 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         if (!day) {
             await sendTextMessage(
                 waId,
-                `No pude entender esa fecha.\n\n${DATE_HINT}\n\n_O escribí *reiniciar*._`
+                withStepHint(
+                    `No pude entender esa fecha.\n\n${DATE_HINT}`,
+                    'AWAIT_DATE'
+                )
             );
             return;
         }
@@ -598,8 +1138,11 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
             });
             await sendTextMessage(
                 waId,
-                `Ese día ya pasó. Hoy es *${todayLabel}*.\n\n` +
-                    `Decime un día de hoy en adelante. ${DATE_HINT}`
+                withStepHint(
+                    `Ese día ya pasó. Hoy es *${todayLabel}*.\n\n` +
+                        `Decime un día de hoy en adelante. ${DATE_HINT}`,
+                    'AWAIT_DATE'
+                )
             );
             return;
         }
@@ -608,8 +1151,11 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         if (!isWorkingDay(day, schedule)) {
             await sendTextMessage(
                 waId,
-                `Los *${pluralWeekday(day)}* el taller no atiende.\n\n` +
-                    `${describeSchedule(schedule)}\nDecime otro día. ${DATE_HINT}`
+                withStepHint(
+                    `Los *${pluralWeekday(day)}* el taller no atiende.\n\n` +
+                        `${describeSchedule(schedule)}\nDecime otro día. ${DATE_HINT}`,
+                    'AWAIT_DATE'
+                )
             );
             return;
         }
@@ -637,7 +1183,7 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
                       `Escribila en formato de 24 horas (*16* para las 4 de la tarde) ` +
                       `o aclarame, por ejemplo *4 de la tarde*.`
                     : `No pude entender esa hora.\n\n${TIME_HINT}`;
-            await sendTextMessage(waId, message);
+            await sendTextMessage(waId, withStepHint(message, 'AWAIT_TIME'));
             return;
         }
 
@@ -649,8 +1195,11 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         if (!slotCheck.ok) {
             await sendTextMessage(
                 waId,
-                `${slotCheck.message}\n\n` +
-                    `Decime otra hora, o escribí *cambiar fecha* para elegir otro día.`
+                withStepHint(
+                    `${slotCheck.message}\n\n` +
+                        `Decime otra hora, o escribí *cambiar fecha* para elegir otro día.`,
+                    'AWAIT_TIME'
+                )
             );
             return;
         }
@@ -659,8 +1208,11 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
             const nowLabel = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
             await sendTextMessage(
                 waId,
-                `Esa hora ya pasó: ahora son las *${nowLabel}*.\n\n` +
-                    `Decime una hora más adelante, o escribí *cambiar fecha* para elegir otro día.`
+                withStepHint(
+                    `Esa hora ya pasó: ahora son las *${nowLabel}*.\n\n` +
+                        `Decime una hora más adelante, o escribí *cambiar fecha* para elegir otro día.`,
+                    'AWAIT_TIME'
+                )
             );
             return;
         }
@@ -675,5 +1227,8 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
 
     // Estado desconocido: sanitizar
     await clearDrafts(waId);
-    await sendTextMessage(waId, HELP_HINT);
+    await sendTextMessage(
+        waId,
+        `No te entendí.\n\n${HELP_HINT}`
+    );
 }

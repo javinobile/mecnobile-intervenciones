@@ -14,7 +14,7 @@ export function normalizeWaId(raw: string | null | undefined): string | null {
     if (digits.startsWith('0')) {
         digits = digits.slice(1);
     }
-    // 15… móvil viejo → quitar 15
+    // 15… móvil viejo → quitar 15 (solo si queda área+número ~10 dígitos)
     if (digits.startsWith('15') && digits.length >= 10) {
         digits = digits.slice(2);
     }
@@ -27,6 +27,105 @@ export function normalizeWaId(raw: string | null | undefined): string | null {
         return `54${digits}`;
     }
     return digits;
+}
+
+/**
+ * Claves de comparación para teléfonos AR / WhatsApp.
+ * Une formatos distintos del mismo celular, p.ej.:
+ * - WhatsApp: 5493482540023
+ * - Agenda vieja: 15540023 (15 + abonado, sin código de área)
+ * - Local: 3482540023 / 0348215540023
+ *
+ * Los fijos no suelen compartir estas variantes con un wa_id móvil: no matchean (correcto).
+ */
+export function phoneMatchKeys(raw: string | null | undefined): string[] {
+    if (!raw) return [];
+    const rawDigits = raw.replace(/\D/g, '');
+    if (!rawDigits) return [];
+
+    const normalized = normalizeWaId(raw) || rawDigits;
+    const digits = normalized.replace(/\D/g, '');
+    const keys = new Set<string>();
+
+    const add = (k: string | null | undefined) => {
+        if (!k) return;
+        const d = k.replace(/\D/g, '');
+        // Evitar claves demasiado cortas (falsos positivos)
+        if (d.length >= 6) keys.add(d);
+    };
+
+    const addSubscriberSuffixes = (d: string) => {
+        for (const n of [6, 7, 8] as const) {
+            if (d.length > n) add(d.slice(-n));
+        }
+    };
+
+    const addArMobileVariants = (d: string) => {
+        add(d);
+        if (d.length >= 10) add(d.slice(-10));
+
+        if (d.startsWith('549') && d.length >= 12) {
+            const local = d.slice(3); // sin 54+9 → área+abonado
+            add(local);
+            add(`54${local}`);
+            add(`9${local}`);
+            if (local.length >= 10) add(local.slice(-10));
+            addSubscriberSuffixes(local);
+        } else if (d.startsWith('54') && d.length >= 11) {
+            const rest = d.slice(2);
+            add(rest);
+            if (rest.startsWith('9')) {
+                const local = rest.slice(1);
+                add(local);
+                add(`549${local}`);
+                if (local.length >= 10) add(local.slice(-10));
+                addSubscriberSuffixes(local);
+            } else {
+                add(`549${rest}`);
+                addSubscriberSuffixes(rest);
+            }
+        } else {
+            addSubscriberSuffixes(d);
+        }
+    };
+
+    addArMobileVariants(rawDigits);
+    if (digits !== rawDigits) addArMobileVariants(digits);
+
+    // Formato local viejo: 15 + abonado (ej. 15540023 → 540023)
+    // También 0? + área + 15 + abonado (ej. 0348215540023 / 348215540023)
+    for (const d of [rawDigits, digits]) {
+        if (/^15\d{6,8}$/.test(d)) {
+            const subscriber = d.slice(2);
+            add(subscriber);
+            add(`15${subscriber}`);
+        }
+
+        const withArea15 = d.match(/^(?:0)?(\d{2,4})15(\d{6,8})$/);
+        if (withArea15) {
+            const area = withArea15[1];
+            const subscriber = withArea15[2];
+            add(subscriber);
+            add(`15${subscriber}`);
+            add(`${area}${subscriber}`);
+            add(`${area}15${subscriber}`);
+            add(`549${area}${subscriber}`);
+            add(`54${area}${subscriber}`);
+        }
+    }
+
+    return Array.from(keys);
+}
+
+export function phonesLikelyMatch(
+    a: string | null | undefined,
+    b: string | null | undefined
+): boolean {
+    const ka = phoneMatchKeys(a);
+    const kb = phoneMatchKeys(b);
+    if (!ka.length || !kb.length) return false;
+    const setB = new Set(kb);
+    return ka.some((k) => setB.has(k));
 }
 
 /**

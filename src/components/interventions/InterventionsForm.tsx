@@ -10,11 +10,20 @@ import {
 } from '@/actions/intervention.actions';
 import { useRouter } from 'next/navigation';
 
+function toDatetimeLocalValue(date: Date | string | null | undefined): string {
+    if (!date) return '';
+    const d = new Date(date);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 interface InterventionEditFormProps {
     interventionId: string;
     initialNotes: string | null;
     initialDescription: string;
     initialMileageKm: number;
+    initialEstimatedReadyAt: Date | string | null;
     canEditContent: boolean;
     canClose: boolean;
     canRequestCancel: boolean;
@@ -29,6 +38,7 @@ type FormSnapshot = {
     notes: string;
     description: string;
     mileageKm: string;
+    estimatedReadyAt: string;
 };
 
 const inputClass =
@@ -38,7 +48,8 @@ function snapshotsEqual(a: FormSnapshot, b: FormSnapshot) {
     return (
         a.notes === b.notes &&
         a.description === b.description &&
-        a.mileageKm === b.mileageKm
+        a.mileageKm === b.mileageKm &&
+        a.estimatedReadyAt === b.estimatedReadyAt
     );
 }
 
@@ -47,6 +58,7 @@ export default function InterventionEditForm({
     interventionId,
     initialDescription,
     initialMileageKm,
+    initialEstimatedReadyAt,
     canEditContent,
     canClose,
     canRequestCancel,
@@ -60,10 +72,14 @@ export default function InterventionEditForm({
     const [notes, setNotes] = useState(initialNotes || '');
     const [description, setDescription] = useState(initialDescription);
     const [mileageKm, setMileageKm] = useState(initialMileageKm.toString());
+    const [estimatedReadyAt, setEstimatedReadyAt] = useState(
+        toDatetimeLocalValue(initialEstimatedReadyAt)
+    );
     const [saved, setSaved] = useState<FormSnapshot>({
         notes: initialNotes || '',
         description: initialDescription,
         mileageKm: initialMileageKm.toString(),
+        estimatedReadyAt: toDatetimeLocalValue(initialEstimatedReadyAt),
     });
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -76,14 +92,16 @@ export default function InterventionEditForm({
             notes: initialNotes || '',
             description: initialDescription,
             mileageKm: initialMileageKm.toString(),
+            estimatedReadyAt: toDatetimeLocalValue(initialEstimatedReadyAt),
         };
         setSaved(next);
         setNotes(next.notes);
         setDescription(next.description);
         setMileageKm(next.mileageKm);
-    }, [initialNotes, initialDescription, initialMileageKm]);
+        setEstimatedReadyAt(next.estimatedReadyAt);
+    }, [initialNotes, initialDescription, initialMileageKm, initialEstimatedReadyAt]);
 
-    const current: FormSnapshot = { notes, description, mileageKm };
+    const current: FormSnapshot = { notes, description, mileageKm, estimatedReadyAt };
     const isDirty = !snapshotsEqual(current, saved);
 
     const handleSave = async (e: React.FormEvent) => {
@@ -98,6 +116,7 @@ export default function InterventionEditForm({
                 notes,
                 description,
                 mileageKm,
+                estimatedReadyAt,
             });
 
             if (!result.success) throw new Error(result.message);
@@ -147,7 +166,22 @@ export default function InterventionEditForm({
         setNotes(saved.notes);
         setDescription(saved.description);
         setMileageKm(saved.mileageKm);
+        setEstimatedReadyAt(saved.estimatedReadyAt);
         setMessage(null);
+    };
+
+    const formatEstimatedLabel = (value: string) => {
+        if (!value) return 'Sin fecha estimada.';
+        const d = new Date(value);
+        if (Number.isNaN(d.getTime())) return 'Sin fecha estimada.';
+        return d.toLocaleString('es-AR', {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+        });
     };
 
     return (
@@ -177,6 +211,36 @@ export default function InterventionEditForm({
                             onChange={(e) => setMileageKm(e.target.value)}
                             className={inputClass}
                         />
+                    </div>
+                    <div>
+                        <label
+                            htmlFor="estimatedReadyAt"
+                            className="block text-sm font-medium text-gray-700"
+                        >
+                            Entrega probable{' '}
+                            <span className="font-normal text-gray-500">(opcional)</span>
+                        </label>
+                        <div className="mt-1 flex flex-col sm:flex-row gap-2 sm:items-center">
+                            <input
+                                id="estimatedReadyAt"
+                                type="datetime-local"
+                                value={estimatedReadyAt}
+                                onChange={(e) => setEstimatedReadyAt(e.target.value)}
+                                className={inputClass + ' sm:flex-1'}
+                            />
+                            {estimatedReadyAt && (
+                                <button
+                                    type="button"
+                                    onClick={() => setEstimatedReadyAt('')}
+                                    className="min-h-11 px-3 text-sm font-medium text-gray-600 hover:text-gray-900 underline sm:shrink-0"
+                                >
+                                    Quitar
+                                </button>
+                            )}
+                        </div>
+                        <p className="mt-1 text-xs text-gray-500">
+                            Si la cargás, el cliente la ve al preguntar *estado* por WhatsApp.
+                        </p>
                     </div>
                     <div>
                         <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
@@ -226,6 +290,10 @@ export default function InterventionEditForm({
                     <div>
                         <h3 className="font-semibold text-gray-700">Km</h3>
                         <p>{Number(mileageKm).toLocaleString('es-AR')}</p>
+                    </div>
+                    <div>
+                        <h3 className="font-semibold text-gray-700">Entrega probable</h3>
+                        <p>{formatEstimatedLabel(estimatedReadyAt)}</p>
                     </div>
                     <div>
                         <h3 className="font-semibold text-gray-700">Notas</h3>
