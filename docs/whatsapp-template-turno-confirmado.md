@@ -2,6 +2,13 @@
 
 ## Confirmación: `turno_confirmado`
 
+Orden de envío del sistema:
+
+1. **Texto libre** generado por la app (dentro de la ventana de 24 h desde el último mensaje del cliente).
+2. Si eso falla (ventana cerrada), plantilla Utility `turno_confirmado`.
+
+Creación en Meta:
+
 1. Meta Business / WhatsApp → Message templates → Create.
 2. Categoría: **Utility**.
 3. Nombre: `turno_confirmado`.
@@ -23,23 +30,30 @@ Parámetros enviados por el sistema:
 
 ## Alternativas: `turno_alternativas`
 
-Esta plantilla acepta entre dos y tres opciones porque todas se envían juntas dentro de `{{2}}`.
+Fuera de la ventana de 24 h Meta no permite títulos de botón dinámicos (fechas/horas).
+La plantilla usa **3 botones Quick Reply fijos** (`Opcion 1` / `Opcion 2` / `Opcion 3`);
+las fechas reales van en el body (`{{2}}`). Al enviar, el sistema pone payload dinámico
+`turno_slot_0` … `turno_slot_2` (el webhook lo recibe igual que un botón interactivo).
 
-1. Crear otra plantilla con categoría **Utility**.
+1. Crear plantilla con categoría **Utility**.
 2. Nombre: `turno_alternativas`.
 3. Idioma: `Spanish (ARG)` / `es_AR`.
 4. Body:
 
 ```text
 Hola {{1}}, no podemos recibir tu auto en el horario solicitado.
-Opciones disponibles: {{2}}
-Respondé con el número de la opción que preferís (1, 2 o 3).
+Opciones disponibles:
+{{2}}
+Elegí una opción con los botones (o respondé 1, 2 o 3).
 ```
 
-Parámetros enviados por el sistema:
-
-- `{{1}}`: nombre del cliente
-- `{{2}}`: bloque numerado, por ejemplo:
+5. Buttons → Quick Reply (exactamente 3, texto **sin variables**):
+   - `Opcion 1`
+   - `Opcion 2`
+   - `Opcion 3`
+6. Ejemplos de variables para la revisión:
+   - `{{1}}`: `Juan Pérez`
+   - `{{2}}`:
 
 ```text
 1) lunes 10 de agosto de 2026 a las 09:00
@@ -47,17 +61,25 @@ Parámetros enviados por el sistema:
 3) martes 11 de agosto de 2026 a las 10:30
 ```
 
-### Botones (camino preferido)
+Parámetros enviados por el sistema:
+
+- Body `{{1}}`: nombre del cliente
+- Body `{{2}}`: bloque numerado (2 o 3 líneas)
+- Payload botón índice 0/1/2: `turno_slot_0` / `turno_slot_1` / `turno_slot_2`
+
+Si el mecánico propone solo 2 horarios, el body lista 2; tocar `Opcion 3` responde que
+esa opción no está disponible.
+
+### Botones dentro de la ventana de 24 h
 
 Mientras la conversación esté abierta (24 h desde el último mensaje del cliente), las
-alternativas se envían como **botones de respuesta rápida**: el cliente toca el horario
-y el turno queda confirmado sin escribir nada. Los IDs son `turno_slot_0`, `turno_slot_1`
-y `turno_slot_2`, y el título es corto por límite de Meta (20 caracteres), por ejemplo
-`lun 10/08 09:00`.
+alternativas se envían como **mensajes interactivos** (no plantilla): el título del botón
+es el horario corto (máx. 20 caracteres), por ejemplo `lun 10/08 09:00`, con el mismo
+ID `turno_slot_N`. El cliente toca y el turno queda confirmado.
 
-Si la ventana de 24 h está cerrada, el sistema usa la plantilla `turno_alternativas` y,
-como último recurso, texto numerado. En ambos casos el cliente responde `1`, `2` o `3`,
-el webhook selecciona ese horario, confirma el turno y envía `turno_confirmado`.
+Si esa vía falla (ventana cerrada), el sistema usa la plantilla de arriba y, como último
+recurso, texto numerado. En todos los casos el webhook confirma con el payload o con
+`1` / `2` / `3` y luego envía `turno_confirmado`.
 
 ## Envío a revisión y configuración
 

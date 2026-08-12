@@ -84,6 +84,19 @@ else
   BACKUP_NAME="backup-$(date +%F-%H%M).dump"
   remote "docker exec taller_db pg_dump -U ${DB_USER} -d ${DB_NAME} -Fc" > "$ROOT_DIR/$BACKUP_NAME"
   echo "   Guardado local: $BACKUP_NAME"
+
+  # Rotación: dejar solo los KEEP_BACKUPS más recientes (default 5).
+  # Compatible con bash y con `sh build-and-push.sh` (sin process substitution).
+  KEEP_BACKUPS="${KEEP_BACKUPS:-5}"
+  n=0
+  # shellcheck disable=SC2012
+  for old in $(ls -t "$ROOT_DIR"/backup-*.dump 2>/dev/null); do
+    n=$((n + 1))
+    if [ "$n" -gt "$KEEP_BACKUPS" ]; then
+      rm -f -- "$old"
+      echo "   Eliminado dump viejo: $(basename "$old")"
+    fi
+  done
 fi
 
 # --- Migraciones vía túnel (Prisma corre en tu Mac, datos en el VPS) ---

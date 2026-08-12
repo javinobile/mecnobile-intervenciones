@@ -77,13 +77,38 @@ export async function sendInteractiveButtons(
     });
 }
 
+/**
+ * Envía una plantilla aprobada. Si `buttonPayloads` está presente, adjunta
+ * componentes Quick Reply (títulos fijos en Meta; el payload vuelve en el webhook).
+ */
 export async function sendTemplateMessage(
     toWaId: string,
     templateName: string,
     languageCode: string,
-    bodyParams: string[]
+    bodyParams: string[],
+    buttonPayloads?: string[]
 ): Promise<SendResult> {
     const { phoneNumberId } = getWhatsAppConfig();
+    const components: Array<Record<string, unknown>> = [];
+
+    if (bodyParams.length) {
+        components.push({
+            type: 'body',
+            parameters: bodyParams.map((text) => ({ type: 'text', text })),
+        });
+    }
+
+    if (buttonPayloads?.length) {
+        for (let i = 0; i < buttonPayloads.length; i++) {
+            components.push({
+                type: 'button',
+                sub_type: 'quick_reply',
+                index: String(i),
+                parameters: [{ type: 'payload', payload: buttonPayloads[i] }],
+            });
+        }
+    }
+
     return graphPost(`${phoneNumberId}/messages`, {
         messaging_product: 'whatsapp',
         to: formatMetaRecipientWaId(toWaId),
@@ -91,24 +116,32 @@ export async function sendTemplateMessage(
         template: {
             name: templateName,
             language: { code: languageCode },
-            components: bodyParams.length
-                ? [
-                      {
-                          type: 'body',
-                          parameters: bodyParams.map((text) => ({ type: 'text', text })),
-                      },
-                  ]
-                : [],
+            components,
         },
     });
 }
 
-/** Confirma turno con plantilla de utilidad `turno_confirmado`.
- * Body en Meta (orden fijo de variables):
- *   {{1}} = nombre del cliente
- *   {{2}} = fecha (texto)
- *   {{3}} = hora
- * Si la plantilla falla (aún no aprobada), se intenta texto libre (ventana 24 h).
+/** Plantilla `turno_alternativas`: body + 3 Quick Reply con payload `turno_slot_N`. */
+export async function sendAlternativesTemplate(
+    toWaId: string,
+    clientName: string,
+    optionsBlock: string
+): Promise<SendResult> {
+    const { templateAlternativas, templateLanguage } = getWhatsAppConfig();
+    return sendTemplateMessage(
+        toWaId,
+        templateAlternativas,
+        templateLanguage,
+        [clientName, optionsBlock],
+        [0, 1, 2].map((i) => `${SLOT_BUTTON_PREFIX}${i}`)
+    );
+}
+
+/**
+ * Confirma el turno al cliente.
+ * 1) Texto libre generado por el sistema (válido dentro de la ventana de 24 h).
+ * 2) Si falla (ventana cerrada), plantilla Utility `turno_confirmado`:
+ *    {{1}} nombre · {{2}} fecha · {{3}} hora
  */
 export async function notifyAppointmentConfirmed(opts: {
     toWaId: string;
@@ -118,15 +151,6 @@ export async function notifyAppointmentConfirmed(opts: {
     const { templateConfirmado, templateLanguage } = getWhatsAppConfig();
     const { fecha, hora, full } = formatDateTimeEsAr(opts.startsAt);
 
-    const templateResult = await sendTemplateMessage(opts.toWaId, templateConfirmado, templateLanguage, [
-        opts.clientName,
-        fecha,
-        hora,
-    ]);
-
-    if (templateResult.ok) return templateResult;
-
-    // Fallback solo útil en número de prueba / ventana 24 h mientras aprueban la plantilla
     const text =
         `Hola ${opts.clientName}, tu turno en Nóbile quedó *confirmado*.\n` +
         `Fecha: ${fecha}\n` +
@@ -134,13 +158,21 @@ export async function notifyAppointmentConfirmed(opts: {
         `(${full})\n` +
         `Te esperamos en el taller. Si no podés asistir, avisanos por este medio.`;
 
-    return sendTextMessage(opts.toWaId, text);
+    const textResult = await sendTextMessage(opts.toWaId, text);
+    if (textResult.ok) return textResult;
+
+    return sendTemplateMessage(opts.toWaId, templateConfirmado, templateLanguage, [
+        opts.clientName,
+        fecha,
+        hora,
+    ]);
 }
 
 /**
- * Envía las alternativas del taller. Preferimos botones: el cliente toca uno y el
- * turno queda confirmado sin escribir nada. Si la ventana de 24 h está cerrada se
- * cae a la plantilla `turno_alternativas` y, como último recurso, a texto numerado.
+ * Envía las alternativas del taller. Preferimos botones interactivos (ventana 24 h)
+ * con el horario en el título. Si fallan (ventana cerrada), usa la plantilla
+ * `turno_alternativas` con botones fijos Opcion 1/2/3 y payload `turno_slot_N`.
+ * Último recurso: texto numerado.
  */
 export async function notifyAppointmentAlternatives(opts: {
     toWaId: string;
@@ -151,11 +183,12 @@ export async function notifyAppointmentAlternatives(opts: {
         const { full } = formatDateTimeEsAr(slot);
         return `${i + 1}) ${full}`;
     });
+    const optionsBlock = lines.join('\n');
 
     const buttonsResult = await sendInteractiveButtons(
         opts.toWaId,
         `Hola ${opts.clientName}, no podemos recibir tu auto en el horario que pediste.\n\n` +
-            `Estos son los horarios disponibles:\n${lines.join('\n')}\n\n` +
+            `Estos son los horarios disponibles:\n${optionsBlock}\n\n` +
             `Tocá el botón del horario que te convenga y tu turno queda confirmado.`,
         opts.slots.map((slot, i) => ({
             id: `${SLOT_BUTTON_PREFIX}${i}`,
@@ -164,21 +197,14 @@ export async function notifyAppointmentAlternatives(opts: {
     );
     if (buttonsResult.ok) return buttonsResult;
 
-    // Plantilla de utilidad `turno_alternativas`:
-    //   {{1}} = nombre del cliente
-    //   {{2}} = bloque numerado con 2 o 3 fechas/horas
-    const { templateAlternativas, templateLanguage } = getWhatsAppConfig();
-    const templateResult = await sendTemplateMessage(opts.toWaId, templateAlternativas, templateLanguage, [
-        opts.clientName,
-        lines.join('\n'),
-    ]);
+    const templateResult = await sendAlternativesTemplate(opts.toWaId, opts.clientName, optionsBlock);
     if (templateResult.ok) return templateResult;
 
     return sendTextMessage(
         opts.toWaId,
         `Hola ${opts.clientName}, no podemos recibir tu auto en el horario pedido.\n` +
             `Estas son las opciones disponibles. Respondé con el *número* de la opción:\n\n` +
-            `${lines.join('\n')}\n\n` +
+            `${optionsBlock}\n\n` +
             `Ejemplo: respondé *1* para la primera opción.`
     );
 }
