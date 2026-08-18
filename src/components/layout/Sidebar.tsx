@@ -7,7 +7,8 @@ import {
   Car, Users, User, LogOut, Home, User2, History,
   LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays, FileText
 } from 'lucide-react';
-import { ForwardRefExoticComponent, RefAttributes, useState } from 'react';
+import { ForwardRefExoticComponent, RefAttributes, useCallback, useEffect, useState } from 'react';
+import { getStaffInbox } from '@/actions/inbox.actions';
 
 interface LinkItem {
   name: string
@@ -40,13 +41,44 @@ const externalNavItems: LinkItem[] = [
   }
 ];
 
+function NavCount({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="ml-auto min-w-5 h-5 px-1 rounded-full bg-red-600 text-white text-[10px] font-bold leading-5 text-center">
+      {count > 9 ? '9+' : count}
+    </span>
+  );
+}
+
 export default function Sidebar() {
   const pathname = usePathname();
   const { data: session } = useSession();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [turnosPending, setTurnosPending] = useState(0);
+  const [historialPending, setHistorialPending] = useState(0);
 
   const isAdmin = session?.user?.role === 'ADMIN';
   const isStaff = session?.user?.role === 'ADMIN' || session?.user?.role === 'MECHANIC';
+
+  const refreshInbox = useCallback(async () => {
+    if (!isStaff || document.hidden) return;
+    const data = await getStaffInbox();
+    setTurnosPending(data.pendingAppointments);
+    setHistorialPending(isAdmin ? data.pendingHistory : 0);
+  }, [isStaff, isAdmin]);
+
+  useEffect(() => {
+    void refreshInbox();
+    const id = window.setInterval(() => void refreshInbox(), 25_000);
+    const onVis = () => {
+      if (!document.hidden) void refreshInbox();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [refreshInbox, pathname]);
 
   let navItems: LinkItem[] = [
     ...baseNavItems.filter((item) => {
@@ -73,6 +105,12 @@ export default function Sidebar() {
     );
 
   const closeSidebar = () => setIsSidebarOpen(false);
+
+  const badgeFor = (href: string) => {
+    if (href === '/dashboard/turnos') return turnosPending;
+    if (href === '/dashboard/historial-solicitudes') return historialPending;
+    return 0;
+  };
 
   return (
     <>
@@ -148,6 +186,7 @@ export default function Sidebar() {
               >
                 <Icon className="w-4 h-4 mr-2.5 shrink-0" />
                 <span className="font-medium">{item.name}</span>
+                <NavCount count={badgeFor(item.href)} />
               </Link>
             );
           })}
@@ -155,9 +194,11 @@ export default function Sidebar() {
 
         <div className="px-2 py-2 border-t border-gray-700">
           <button
-            onClick={() => signOut({
-              callbackUrl: `/`
-            })}
+            onClick={() => {
+              void signOut({ redirect: false }).then(() => {
+                window.location.assign(`${window.location.origin}/login`);
+              });
+            }}
             className="w-full text-left px-2.5 py-2.5 min-h-11 rounded-md text-sm text-red-400 hover:bg-gray-700 hover:text-red-300 transition duration-150 flex items-center"
           >
             <LogOut className="w-4 h-4 mr-2.5" />

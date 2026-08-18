@@ -259,6 +259,7 @@ export async function approveCarHistoryRequest(requestId: string): Promise<{
     }
 
     revalidatePath('/dashboard/historial-solicitudes');
+    revalidatePath('/dashboard');
     if (request.clientId) {
         revalidatePath(`/dashboard/clients/${request.clientId}`);
     }
@@ -315,5 +316,6 @@ export async function rejectCarHistoryRequest(
     }
 
     revalidatePath('/dashboard/historial-solicitudes');
+    revalidatePath('/dashboard');
     return { success: true, message: 'Solicitud rechazada.' };
 }

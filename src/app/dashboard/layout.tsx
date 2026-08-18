@@ -6,6 +6,7 @@ import { getServerSession } from "next-auth"; // Usaremos esto para futuras comp
 import { authOptions } from "@/auth"; // Asume que exportas authOptions desde aquí
 import { redirect } from 'next/navigation';
 import Sidebar from "@/components/layout/Sidebar";
+import TaskBell from "@/components/layout/TaskBell";
 
 export default async function DashboardLayout({
   children, // El contenido de la página actual (/dashboard/page.tsx, /cars/page.tsx, etc.)
@@ -26,6 +27,11 @@ export default async function DashboardLayout({
       <Sidebar />
 
       <main className="flex-grow p-4 lg:p-6 mt-12 lg:mt-0 lg:ml-56 overflow-y-auto">
+        {(session.user.role === 'ADMIN' || session.user.role === 'MECHANIC') && (
+          <div className="fixed top-3 right-3 z-50 lg:static lg:flex lg:justify-end lg:mb-3">
+            <TaskBell isAdmin={session.user.role === 'ADMIN'} />
+          </div>
+        )}
         {children}
       </main>
     </div>

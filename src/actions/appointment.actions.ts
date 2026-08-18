@@ -232,6 +232,7 @@ export async function createAppointment(data: {
         });
 
         revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard');
         return { success: true, message: 'Cita creada (pendiente de confirmación).', id: created.id };
     } catch (error) {
         console.error('Error creating appointment:', error);
@@ -265,6 +266,7 @@ export async function confirmAppointment(
         });
 
         revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard');
 
         const toWaId = resolveNotifyWaId(updated.clientPhone, updated.whatsappWaId);
         let notifyNote = '';
@@ -344,6 +346,7 @@ export async function proposeAppointmentAlternatives(
         });
 
         revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard');
 
         const toWaId = resolveNotifyWaId(updated.clientPhone, updated.whatsappWaId);
         if (!toWaId) {
@@ -398,6 +401,7 @@ export async function deleteAppointment(
     try {
         await prisma.appointment.delete({ where: { id } });
         revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard');
         return { success: true, message: 'Cita eliminada.' };
     } catch (error) {
         console.error('Error deleting appointment:', error);

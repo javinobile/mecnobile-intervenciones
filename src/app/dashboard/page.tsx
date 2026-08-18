@@ -121,6 +121,8 @@ export default async function DashboardPage() {
 
             <p className="text-sm text-gray-600 mb-5">
                 Bienvenido, <span className="font-semibold">{session?.user.name}</span> ({session?.user.role}). Resumen de actividad del taller.
+                {' '}La campanita de arriba avisa turnos por confirmar
+                {session?.user.role === 'ADMIN' ? ' y pedidos de historial' : ''}.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">

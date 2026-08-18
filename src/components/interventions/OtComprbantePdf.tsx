@@ -1,9 +1,10 @@
 // app/components/interventions/OtComprobantePdf.tsx
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
+import { WORKSHOP_LETTERHEAD_CONTACT } from '@/lib/pdf-logo';
 
-const BRAND = '#1E40AF';
-const BRAND_SOFT = '#EFF4FF';
+const BRAND = '#1F1F1F';
+const BRAND_SOFT = '#F3F3F3';
 const BORDER = '#D1D5DB';
 const MUTED = '#6B7280';
 const TEXT = '#374151';
@@ -11,24 +12,38 @@ const TEXT = '#374151';
 const styles = StyleSheet.create({
     page: {
         paddingHorizontal: 28,
-        paddingTop: 24,
+        paddingTop: 12,
         paddingBottom: 32,
         fontFamily: 'Helvetica',
         color: TEXT,
         fontSize: 9,
     },
     header: {
-        paddingBottom: 10,
-        borderBottomWidth: 2,
-        borderBottomColor: BRAND,
-        marginBottom: 12,
-    },
-    logo: {
-        // logo-taller.png es ~788×85 (~9.3:1)
-        width: 300,
-        height: 32,
-        objectFit: 'contain',
+        paddingBottom: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: BORDER,
         marginBottom: 8,
+    },
+    letterheadRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    letterhead: {
+        width: 210,
+        height: 55,
+        objectFit: 'contain',
+        marginRight: 10,
+    },
+    workshopContact: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    workshopAddress: {
+        fontSize: 7.5,
+        color: TEXT,
+        textAlign: 'left',
+        lineHeight: 1.3,
     },
     headerRow: {
         flexDirection: 'row',
@@ -200,11 +215,16 @@ export const OtComprobantePdf = ({ data }: { data: PdfData }) => (
     <Document>
         <Page size="A4" style={styles.page}>
             <View style={styles.header}>
-                {data.logoSrc ? (
-                    <Image src={data.logoSrc} style={styles.logo} />
-                ) : (
-                    <View style={styles.logo} />
-                )}
+                <View style={styles.letterheadRow}>
+                    {data.logoSrc ? (
+                        <Image src={data.logoSrc} style={styles.letterhead} />
+                    ) : (
+                        <View style={styles.letterhead} />
+                    )}
+                    <View style={styles.workshopContact}>
+                        <Text style={styles.workshopAddress}>{WORKSHOP_LETTERHEAD_CONTACT}</Text>
+                    </View>
+                </View>
                 <View style={styles.headerRow}>
                     <View style={styles.headerLeft}>
                         <Text style={styles.title}>COMPROBANTE DE OT #{data.otNumber}</Text>
@@ -289,7 +309,7 @@ export const OtComprobantePdf = ({ data }: { data: PdfData }) => (
             </Text>
 
             <Text style={styles.footer} fixed>
-                Este documento no es una factura. Emitido para el cliente con fines informativos.
+                Este documento no es una factura. Emitido por Nóbile — Servicios del automotor.
             </Text>
         </Page>
     </Document>

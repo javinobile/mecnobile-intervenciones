@@ -1,0 +1,15 @@
+# Secretos y env locales: no deben entrar al build (Next inlinea NEXTAUTH_URL)
+.env
+.env.*
+!.env.example
+
+# Dependencias y artefactos
+node_modules
+.next
+.git
+.cursor
+*.dump
+backup-*.dump
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

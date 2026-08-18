@@ -1,8 +1,9 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
+import { WORKSHOP_LETTERHEAD_CONTACT } from '@/lib/pdf-logo';
 
-const BRAND = '#1E40AF';
-const BRAND_SOFT = '#EFF4FF';
+const BRAND = '#1F1F1F';
+const BRAND_SOFT = '#F3F3F3';
 const BORDER = '#D1D5DB';
 const MUTED = '#6B7280';
 const TEXT = '#374151';
@@ -10,23 +11,38 @@ const TEXT = '#374151';
 const styles = StyleSheet.create({
     page: {
         paddingHorizontal: 28,
-        paddingTop: 24,
+        paddingTop: 12,
         paddingBottom: 36,
         fontFamily: 'Helvetica',
         color: TEXT,
         fontSize: 9,
     },
     header: {
-        paddingBottom: 10,
-        borderBottomWidth: 2,
-        borderBottomColor: BRAND,
-        marginBottom: 12,
-    },
-    logo: {
-        width: 300,
-        height: 32,
-        objectFit: 'contain',
+        paddingBottom: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: BORDER,
         marginBottom: 8,
+    },
+    letterheadRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 6,
+    },
+    letterhead: {
+        width: 210,
+        height: 55,
+        objectFit: 'contain',
+        marginRight: 10,
+    },
+    workshopContact: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    workshopAddress: {
+        fontSize: 7.5,
+        color: TEXT,
+        textAlign: 'left',
+        lineHeight: 1.3,
     },
     title: {
         fontSize: 14,
@@ -168,7 +184,16 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
     <Document>
         <Page size="A4" style={styles.page}>
             <View style={styles.header}>
-                {data.logoSrc ? <Image src={data.logoSrc} style={styles.logo} /> : <View style={styles.logo} />}
+                <View style={styles.letterheadRow}>
+                    {data.logoSrc ? (
+                        <Image src={data.logoSrc} style={styles.letterhead} />
+                    ) : (
+                        <View style={styles.letterhead} />
+                    )}
+                    <View style={styles.workshopContact}>
+                        <Text style={styles.workshopAddress}>{WORKSHOP_LETTERHEAD_CONTACT}</Text>
+                    </View>
+                </View>
                 <Text style={styles.title}>HISTORIAL DEL VEHÍCULO</Text>
                 <Text style={styles.headerMeta}>
                     Emitido por Nóbile · {data.emittedAt.toLocaleDateString('es-AR')}{' '}
@@ -249,8 +274,8 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
             )}
 
             <Text style={styles.footer}>
-                Documento informativo emitido por Nóbile — Tecnología y servicios del automotor.
-                No incluye importes. Calle 24 N° 638, Avellaneda (Sta. Fe).
+                Documento informativo emitido por Nóbile — Servicios del automotor.
+                No incluye importes. {WORKSHOP_LETTERHEAD_CONTACT}
             </Text>
         </Page>
     </Document>

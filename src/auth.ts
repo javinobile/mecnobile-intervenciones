@@ -98,14 +98,23 @@ export const authOptions: AuthOptions = {
       }
       return token;
     },
-    async session({ session, token }) {
+  async session({ session, token }) {
       if (session.user && token.role) {
-        // Sincronizamos el rol y la ID del token con la sesión del usuario
+        // Sincronizamos el rol y el ID del token con la sesión del usuario
         session.user.role = token.role as any; // Usamos 'any' si no configuramos el type de Role en Prisma
         session.user.id = token.id;
       }
       return session;
-    }
+    },
+    async redirect({ url, baseUrl }) {
+      if (url.startsWith('/')) return `${baseUrl}${url}`;
+      try {
+        if (new URL(url).origin === new URL(baseUrl).origin) return url;
+      } catch {
+        /* ignore */
+      }
+      return baseUrl;
+    },
   },
 
   // 5. Páginas personalizadas (ej. /login)

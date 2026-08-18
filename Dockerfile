@@ -42,6 +42,8 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # 🚨 CAMBIO CLAVE: Copiar TODO el código ahora (incluyendo la carpeta prisma/)
 COPY . .
+# Por si el contexto igual trae un .env (NextAuth inlinearía localhost en el bundle)
+RUN rm -f .env .env.local .env.production
 
 # 🚨 Generar el Prisma Client AHORA. El archivo schema.prisma ya existe.
 RUN npx prisma generate
