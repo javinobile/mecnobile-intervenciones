@@ -1,5 +1,11 @@
 import prisma from '../../../lib/prisma';
 import { Prisma } from '../../../generated/prisma';
+import {
+    findFuzzyPlateMatches,
+    formatFuzzyPlateMatchLine,
+    updateCarLicensePlateCorrected,
+    type FuzzyPlateMatch,
+} from '../../../lib/plate-fuzzy-match';
 import { findCarIdByNormalizedPlateExact } from '../../../lib/plate-search';
 import { normalizeLicensePlate, validateNewLicensePlate } from '../../../lib/utils';
 import {
@@ -80,6 +86,11 @@ function stepHint(step: string): string {
                 `_Ahora: el *dominio* sin guiones (*ABC123* o *AA123BB*).\n` +
                 `También: *reiniciar* · *ayuda*_`
             );
+        case 'AWAIT_PLATE_CONFIRM':
+            return (
+                `_Ahora: confirmá si el dominio encontrado es el tuyo (*sí* / *no* o el número de la lista).\n` +
+                `También: *reiniciar* · *ayuda*_`
+            );
         case 'AWAIT_NAME':
             return (
                 `_Ahora: tu *nombre y apellido*.\n` +
@@ -143,6 +154,10 @@ const START_WORDS = new Set(['turno', 'hola', 'buenas', 'buen dia', 'buen día',
 const CANCEL_WORDS = new Set(['cancelar', 'cancelar turno', 'anular', 'anular turno']);
 
 const HELP_WORDS = new Set(['ayuda', 'help', 'opciones', '?']);
+
+const YES_WORDS = new Set(['si', 'sí', 'yes', 'ok', 'dale', 'correcto', 'ese', 'es', 'confirmo', 'confirmar']);
+
+const NO_WORDS = new Set(['no', 'nop', 'ninguno', 'ninguna', 'otro', 'otra', 'none']);
 
 /** Consulta de estado de OT (identifica por este WhatsApp). */
 const STATUS_WORDS = new Set([
@@ -316,6 +331,211 @@ async function getCurrentOwnerName(carId: string): Promise<string | null> {
     if (!ownership) return null;
     const name = `${ownership.client.firstName} ${ownership.client.lastName}`.trim();
     return name || null;
+}
+
+async function proceedAfterPlateResolved(
+    waId: string,
+    plate: string,
+    carId: string | null,
+    ownerName: string | null,
+    introMessage?: string
+) {
+    await prisma.whatsAppConversation.update({
+        where: { waId },
+        data: {
+            draftPlate: plate,
+            draftCarId: carId,
+            draftName: ownerName,
+        },
+    });
+
+    if (carId && ownerName) {
+        if (introMessage) {
+            await sendTextMessage(waId, introMessage);
+        } else {
+            await sendTextMessage(
+                waId,
+                `Encontramos el vehículo *${plate}* a nombre de *${ownerName}*.`
+            );
+        }
+        await askForDate(waId);
+        return;
+    }
+
+    if (carId && !ownerName) {
+        await sendTextMessage(
+            waId,
+            introMessage ||
+                `Encontramos el vehículo *${plate}* en el sistema, pero sin dueño actual cargado.`
+        );
+    } else {
+        await sendTextMessage(
+            waId,
+            introMessage ||
+                `No tenemos el dominio *${plate}* registrado aún. Igual vamos a crear el pedido de turno con esa patente; ` +
+                    `los datos del auto se completan cuando se abra la orden de trabajo.`
+        );
+    }
+
+    await prisma.whatsAppConversation.update({
+        where: { waId },
+        data: { step: 'AWAIT_NAME' },
+    });
+    await sendTextMessage(
+        waId,
+        withStepHint(`¿Cuál es tu *nombre y apellido*?`, 'AWAIT_NAME')
+    );
+}
+
+const PLATE_MIGRATION_NOTE =
+    `_Estamos actualizando los datos del taller al sistema nuevo; por eso a veces la patente puede figurar distinta. ` +
+    `Con tu confirmación la corregimos en el acto._`;
+
+async function askPlateConfirm(waId: string, plate: string, matches: FuzzyPlateMatch[]) {
+    await prisma.whatsAppConversation.update({
+        where: { waId },
+        data: {
+            draftPlate: plate,
+            draftCarId: null,
+            draftName: null,
+            step: 'AWAIT_PLATE_CONFIRM',
+        },
+    });
+
+    if (matches.length === 1) {
+        const match = matches[0];
+        const vehicle = [match.make, match.model].filter(Boolean).join(' ') || 'vehículo';
+        const owner = match.ownerName ? ` a nombre de *${match.ownerName}*` : '';
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `${PLATE_MIGRATION_NOTE}\n\n` +
+                    `Escribiste *${plate}*. En el sistema figura *${match.storedPlate}* (${vehicle}${owner}).\n\n` +
+                    `¿Es tu auto? Respondé *sí* para confirmar (actualizamos el dominio a *${plate}*) ` +
+                    `o *no* para continuar como patente nueva.`,
+                'AWAIT_PLATE_CONFIRM'
+            )
+        );
+        return;
+    }
+
+    const list = matches.map((match, index) => formatFuzzyPlateMatchLine(index, match)).join('\n');
+    await sendTextMessage(
+        waId,
+        withStepHint(
+            `${PLATE_MIGRATION_NOTE}\n\n` +
+                `No tenemos *${plate}* exacto, pero encontramos dominios parecidos:\n\n` +
+                `${list}\n\n` +
+                `¿Cuál es el tuyo? Escribí el *número* o el dominio.\n` +
+                `Si ninguno coincide, escribí *ninguno*.`,
+            'AWAIT_PLATE_CONFIRM'
+        )
+    );
+}
+
+async function confirmPlateMatchAndContinue(
+    waId: string,
+    match: FuzzyPlateMatch,
+    correctedPlate: string
+) {
+    const update = await updateCarLicensePlateCorrected(match.carId, correctedPlate);
+    if (!update.ok) {
+        await sendTextMessage(
+            waId,
+            `${update.message} Continuamos con el dominio que escribiste.`
+        );
+        const ownerName = match.ownerName ?? (await getCurrentOwnerName(match.carId));
+        await proceedAfterPlateResolved(waId, correctedPlate, match.carId, ownerName);
+        return;
+    }
+
+    const ownerName = match.ownerName ?? (await getCurrentOwnerName(match.carId));
+    await proceedAfterPlateResolved(
+        waId,
+        correctedPlate,
+        match.carId,
+        ownerName,
+        `Perfecto, actualizamos el dominio a *${correctedPlate}*.`
+    );
+}
+
+async function proceedAsNewPlate(waId: string, plate: string) {
+    await proceedAfterPlateResolved(waId, plate, null, null);
+}
+
+async function handleAwaitPlateConfirm(waId: string, text: string): Promise<void> {
+    const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
+    if (!conv?.draftPlate) {
+        await clearDrafts(waId);
+        await sendTextMessage(
+            waId,
+            `Se perdió el dominio del pedido.\n\n${HELP_HINT}`
+        );
+        return;
+    }
+
+    const plate = conv.draftPlate;
+    const keyword = normalizeBotKeyword(text);
+    const matches = await findFuzzyPlateMatches(plate);
+
+    if (!matches.length) {
+        await proceedAsNewPlate(waId, plate);
+        return;
+    }
+
+    if (NO_WORDS.has(keyword)) {
+        await proceedAsNewPlate(waId, plate);
+        return;
+    }
+
+    if (matches.length === 1 && YES_WORDS.has(keyword)) {
+        await confirmPlateMatchAndContinue(waId, matches[0], plate);
+        return;
+    }
+
+    const indexMatch = text.trim().match(/^(\d+)$/);
+    if (indexMatch) {
+        const idx = parseInt(indexMatch[1], 10) - 1;
+        if (idx >= 0 && idx < matches.length) {
+            await confirmPlateMatchAndContinue(waId, matches[idx], plate);
+            return;
+        }
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `Número inválido. Elegí del 1 al ${matches.length}, o escribí *ninguno*.`,
+                'AWAIT_PLATE_CONFIRM'
+            )
+        );
+        return;
+    }
+
+    const byPlate = matches.find(
+        (match) => normalizeLicensePlate(match.storedPlate) === normalizeLicensePlate(text)
+    );
+    if (byPlate) {
+        await confirmPlateMatchAndContinue(waId, byPlate, plate);
+        return;
+    }
+
+    if (matches.length === 1) {
+        await sendTextMessage(
+            waId,
+            withStepHint(
+                `Respondé *sí* si es tu auto, o *no* para continuar con *${plate}* como patente nueva.`,
+                'AWAIT_PLATE_CONFIRM'
+            )
+        );
+        return;
+    }
+
+    await sendTextMessage(
+        waId,
+        withStepHint(
+            `Elegí un número del 1 al ${matches.length}, escribí el dominio de la lista, o *ninguno*.`,
+            'AWAIT_PLATE_CONFIRM'
+        )
+    );
 }
 
 async function findClientAppointments(waId: string) {
@@ -899,7 +1119,7 @@ async function createPendingFromDraft(waId: string) {
 }
 
 /**
- * FSM: IDLE → AWAIT_ISSUE → AWAIT_PLATE → [AWAIT_NAME] → AWAIT_DATE → AWAIT_TIME → crea PENDIENTE
+ * FSM: IDLE → AWAIT_ISSUE → AWAIT_PLATE → [AWAIT_PLATE_CONFIRM] → [AWAIT_NAME] → AWAIT_DATE → AWAIT_TIME → crea PENDIENTE
  * Consulta: *estado* → (AWAIT_STATUS_PLATE si hay varios autos) → reporte OT abierta
  *
  * Reglas anti-datos colgados:
@@ -976,6 +1196,11 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         return;
     }
 
+    if (conv.step === 'AWAIT_PLATE_CONFIRM') {
+        await handleAwaitPlateConfirm(waId, text);
+        return;
+    }
+
     // Solo *turno* / saludo arranca el pedido. En IDLE, si no se entiende → menú.
     if (START_WORDS.has(lower)) {
         await clearDrafts(waId);
@@ -1040,50 +1265,19 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
 
         const plate = plateValidation.plate;
         const carId = await findCarIdByNormalizedPlateExact(plate);
-        let ownerName: string | null = null;
         if (carId) {
-            ownerName = await getCurrentOwnerName(carId);
-        }
-
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: {
-                draftPlate: plate,
-                draftCarId: carId,
-                draftName: ownerName,
-            },
-        });
-
-        if (carId && ownerName) {
-            await sendTextMessage(
-                waId,
-                `Encontramos el vehículo *${plate}* a nombre de *${ownerName}*.`
-            );
-            await askForDate(waId);
+            const ownerName = await getCurrentOwnerName(carId);
+            await proceedAfterPlateResolved(waId, plate, carId, ownerName);
             return;
         }
 
-        if (carId && !ownerName) {
-            await sendTextMessage(
-                waId,
-                `Encontramos el vehículo *${plate}* en el sistema, pero sin dueño actual cargado.`
-            );
-        } else {
-            await sendTextMessage(
-                waId,
-                `No tenemos el dominio *${plate}* registrado aún. Igual vamos a crear el pedido de turno con esa patente; ` +
-                    `los datos del auto se completan cuando se abra la orden de trabajo.`
-            );
+        const fuzzyMatches = await findFuzzyPlateMatches(plate);
+        if (fuzzyMatches.length > 0) {
+            await askPlateConfirm(waId, plate, fuzzyMatches);
+            return;
         }
 
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: { step: 'AWAIT_NAME' },
-        });
-        await sendTextMessage(
-            waId,
-            withStepHint(`¿Cuál es tu *nombre y apellido*?`, 'AWAIT_NAME')
-        );
+        await proceedAfterPlateResolved(waId, plate, null, null);
         return;
     }
 
