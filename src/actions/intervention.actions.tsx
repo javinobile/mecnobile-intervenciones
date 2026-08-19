@@ -55,6 +55,8 @@ export interface InterventionsPageResult {
     totalCount: number;
     /** Suma de cost del filtro (sin paginar). */
     totalCost: number;
+    /** Suma de ítems de mano de obra del filtro (sin paginar). */
+    totalLaborCost: number;
 }
 
 /** Interpreta YYYY-MM-DD como inicio/fin de día (UTC) para filtros de fecha. */
@@ -123,6 +125,7 @@ export async function getInterventionsPage(
         currentPage: 1,
         totalCount: 0,
         totalCost: 0,
+        totalLaborCost: 0,
     };
 
     const session = await getServerSession(authOptions);
@@ -190,15 +193,23 @@ export async function getInterventionsPage(
     };
 
     try {
-        const [totalCount, costAgg] = await Promise.all([
+        const [totalCount, costAgg, laborAgg] = await Promise.all([
             prisma.intervention.count({ where: whereClause }),
             prisma.intervention.aggregate({
                 where: whereClause,
                 _sum: { cost: true },
             }),
+            prisma.interventionItem.aggregate({
+                where: {
+                    type: InterventionItemType.MANO_DE_OBRA,
+                    intervention: whereClause,
+                },
+                _sum: { amount: true },
+            }),
         ]);
 
         const totalCost = costAgg._sum.cost?.toNumber() ?? 0;
+        const totalLaborCost = laborAgg._sum.amount?.toNumber() ?? 0;
         const totalPages = Math.ceil(totalCount / PAGE_SIZE);
         const safePage = totalPages > 0 ? Math.min(currentPage, totalPages) : 1;
 
@@ -261,6 +272,7 @@ export async function getInterventionsPage(
             currentPage: safePage,
             totalCount,
             totalCost,
+            totalLaborCost,
         };
     } catch (error) {
         console.error("Error fetching interventions:", error);

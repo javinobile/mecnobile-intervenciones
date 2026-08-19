@@ -8,10 +8,11 @@ const STORAGE_KEY = 'mecnobile-ot-totals-visible';
 interface OtTotalsSummaryProps {
     totalCount: number;
     totalCost: number;
+    totalLaborCost: number;
     ownerCommissionPct: number;
 }
 
-export default function OtTotalsSummary({ totalCount, totalCost, ownerCommissionPct }: OtTotalsSummaryProps) {
+export default function OtTotalsSummary({ totalCount, totalCost, totalLaborCost, ownerCommissionPct }: OtTotalsSummaryProps) {
     const [visible, setVisible] = useState(true);
 
     useEffect(() => {
@@ -39,6 +40,8 @@ export default function OtTotalsSummary({ totalCount, totalCost, ownerCommission
     const pct = Math.min(100, Math.max(0, ownerCommissionPct));
     const ownerAmount = totalCost * (pct / 100);
     const mechanicAmount = totalCost - ownerAmount;
+    const ownerLaborAmount = totalLaborCost * (pct / 100);
+    const mechanicLaborAmount = totalLaborCost - ownerLaborAmount;
 
     const costLabel = new Intl.NumberFormat('es-AR', {
         style: 'currency',
@@ -52,6 +55,18 @@ export default function OtTotalsSummary({ totalCount, totalCost, ownerCommission
         style: 'currency',
         currency: 'ARS',
     }).format(mechanicAmount);
+    const laborLabel = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+    }).format(totalLaborCost);
+    const ownerLaborLabel = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+    }).format(ownerLaborAmount);
+    const mechanicLaborLabel = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+    }).format(mechanicLaborAmount);
 
     return (
         <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 bg-blue-50/80">
@@ -72,6 +87,19 @@ export default function OtTotalsSummary({ totalCount, totalCost, ownerCommission
                     <div>
                         <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Mecánico ({100 - pct}%)</p>
                         <p className="text-xl font-bold text-orange-800">{mechanicLabel}</p>
+                    </div>
+                    <div className="w-px bg-blue-200 hidden sm:block" />
+                    <div>
+                        <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Mano de obra</p>
+                        <p className="text-xl font-bold text-cyan-800">{laborLabel}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Comisionado M.O. ({pct}%)</p>
+                        <p className="text-xl font-bold text-sky-800">{ownerLaborLabel}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Mecánico M.O. ({100 - pct}%)</p>
+                        <p className="text-xl font-bold text-amber-800">{mechanicLaborLabel}</p>
                     </div>
                 </div>
             ) : (

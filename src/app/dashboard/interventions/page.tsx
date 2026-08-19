@@ -35,7 +35,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
 
     const workshopSettings = isAdmin ? await getWorkshopSettings() : null;
 
-    const { interventions, totalPages, currentPage, totalCount, totalCost } = await getInterventionsPage(
+    const { interventions, totalPages, currentPage, totalCount, totalCost, totalLaborCost } = await getInterventionsPage(
         requestedPage,
         query,
         status,
@@ -128,7 +128,12 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     isAdmin={!!isAdmin}
                 />
                 {isAdmin && (
-                    <OtTotalsSummary totalCount={totalCount} totalCost={totalCost} ownerCommissionPct={workshopSettings?.ownerCommissionPct ?? 70} />
+                    <OtTotalsSummary
+                        totalCount={totalCount}
+                        totalCost={totalCost}
+                        totalLaborCost={totalLaborCost}
+                        ownerCommissionPct={workshopSettings?.ownerCommissionPct ?? 70}
+                    />
                 )}
             </div>
 
