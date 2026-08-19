@@ -4,6 +4,7 @@ import { Wrench, PlusCircle, Clock, CheckCircle, XCircle, ChevronLeft, ChevronRi
 import { getInterventionsPage, InterventionListItem } from '@/actions/intervention.actions';
 import InterventionsSearchForm from '@/components/interventions/InterventionsSearchForm';
 import OtTotalsSummary from '@/components/interventions/OtTotalsSummary';
+import { getWorkshopSettings } from '@/actions/settings.actions';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/auth';
 
@@ -31,6 +32,8 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
     const dateTo = isAdmin ? (resolved.to || '') : '';
     const range = isAdmin ? (resolved.range || '') : '';
     const dateMode = isAdmin && resolved.dateMode === 'open' ? 'open' : 'close';
+
+    const workshopSettings = isAdmin ? await getWorkshopSettings() : null;
 
     const { interventions, totalPages, currentPage, totalCount, totalCost } = await getInterventionsPage(
         requestedPage,
@@ -125,7 +128,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     isAdmin={!!isAdmin}
                 />
                 {isAdmin && (
-                    <OtTotalsSummary totalCount={totalCount} totalCost={totalCost} />
+                    <OtTotalsSummary totalCount={totalCount} totalCost={totalCost} ownerCommissionPct={workshopSettings?.ownerCommissionPct ?? 70} />
                 )}
             </div>
 

@@ -309,6 +309,9 @@ model WorkshopSettings {
   saturdayOpeningTime String  @default("08:00")
   saturdayClosingTime String  @default("13:00")
 
+  /// Porcentaje del total cobrado que queda para el taller (el resto va al mecánico).
+  ownerCommissionPct Int @default(70)
+
   updatedAt  DateTime @updatedAt
   createdAt  DateTime @default(now())
 }

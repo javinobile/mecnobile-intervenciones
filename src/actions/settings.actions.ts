@@ -12,9 +12,9 @@ import {
     parseHhMm,
 } from '@/lib/workshop-schedule';
 
-export type WorkshopSettingsData = WorkshopSchedule & { hourlyRate: number };
+export type WorkshopSettingsData = WorkshopSchedule & { hourlyRate: number; ownerCommissionPct: number };
 
-const EMPTY_SETTINGS: WorkshopSettingsData = { hourlyRate: 0, ...DEFAULT_SCHEDULE };
+const EMPTY_SETTINGS: WorkshopSettingsData = { hourlyRate: 0, ownerCommissionPct: 70, ...DEFAULT_SCHEDULE };
 
 export async function getWorkshopSettings(): Promise<WorkshopSettingsData> {
     const session = await getServerSession(authOptions);
@@ -36,6 +36,7 @@ export async function getWorkshopSettings(): Promise<WorkshopSettingsData> {
         closingTime: settings.closingTime,
         saturdayOpeningTime: settings.saturdayOpeningTime,
         saturdayClosingTime: settings.saturdayClosingTime,
+        ownerCommissionPct: settings.ownerCommissionPct,
     };
 }
 
@@ -47,6 +48,7 @@ export type UpdateWorkshopSettingsInput = {
     closingTime: string;
     saturdayOpeningTime: string;
     saturdayClosingTime: string;
+    ownerCommissionPct: string;
 };
 
 export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput): Promise<{
@@ -62,6 +64,11 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
     const hourlyRate = parseFloat(input.hourlyRate);
     if (isNaN(hourlyRate) || hourlyRate < 0) {
         return { success: false, message: 'El precio hora debe ser un número válido ≥ 0.' };
+    }
+
+    const ownerCommissionPct = parseFloat(input.ownerCommissionPct);
+    if (isNaN(ownerCommissionPct) || ownerCommissionPct < 0 || ownerCommissionPct > 100) {
+        return { success: false, message: 'La comisión del taller debe estar entre 0 y 100.' };
     }
 
     const ranges: Array<{ label: string; open: string; close: string }> = [
@@ -98,6 +105,7 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
             closingTime: input.closingTime.trim(),
             saturdayOpeningTime: input.saturdayOpeningTime.trim(),
             saturdayClosingTime: input.saturdayClosingTime.trim(),
+            ownerCommissionPct: Math.round(ownerCommissionPct),
         };
 
         const settings = await prisma.workshopSettings.upsert({
@@ -121,6 +129,7 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
                 closingTime: settings.closingTime,
                 saturdayOpeningTime: settings.saturdayOpeningTime,
                 saturdayClosingTime: settings.saturdayClosingTime,
+                ownerCommissionPct: settings.ownerCommissionPct,
             },
         };
     } catch (error) {

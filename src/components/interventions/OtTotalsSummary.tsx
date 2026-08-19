@@ -8,9 +8,10 @@ const STORAGE_KEY = 'mecnobile-ot-totals-visible';
 interface OtTotalsSummaryProps {
     totalCount: number;
     totalCost: number;
+    ownerCommissionPct: number;
 }
 
-export default function OtTotalsSummary({ totalCount, totalCost }: OtTotalsSummaryProps) {
+export default function OtTotalsSummary({ totalCount, totalCost, ownerCommissionPct }: OtTotalsSummaryProps) {
     const [visible, setVisible] = useState(true);
 
     useEffect(() => {
@@ -35,10 +36,22 @@ export default function OtTotalsSummary({ totalCount, totalCost }: OtTotalsSumma
         });
     };
 
+    const pct = Math.min(100, Math.max(0, ownerCommissionPct));
+    const ownerAmount = totalCost * (pct / 100);
+    const mechanicAmount = totalCost - ownerAmount;
+
     const costLabel = new Intl.NumberFormat('es-AR', {
         style: 'currency',
         currency: 'ARS',
     }).format(totalCost);
+    const ownerLabel = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+    }).format(ownerAmount);
+    const mechanicLabel = new Intl.NumberFormat('es-AR', {
+        style: 'currency',
+        currency: 'ARS',
+    }).format(mechanicAmount);
 
     return (
         <div className="flex items-center justify-between gap-3 p-3 rounded-xl border border-blue-100 bg-blue-50/80">
@@ -51,6 +64,14 @@ export default function OtTotalsSummary({ totalCount, totalCost }: OtTotalsSumma
                     <div>
                         <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Total económico</p>
                         <p className="text-xl font-bold text-emerald-800">{costLabel}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Comisionado ({pct}%)</p>
+                        <p className="text-xl font-bold text-indigo-800">{ownerLabel}</p>
+                    </div>
+                    <div>
+                        <p className="text-xs font-medium text-blue-700 uppercase tracking-wide">Mecánico ({100 - pct}%)</p>
+                        <p className="text-xl font-bold text-orange-800">{mechanicLabel}</p>
                     </div>
                 </div>
             ) : (

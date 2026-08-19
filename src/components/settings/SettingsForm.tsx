@@ -11,6 +11,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
     const [closingTime, setClosingTime] = useState(initialSettings.closingTime);
     const [saturdayOpeningTime, setSaturdayOpeningTime] = useState(initialSettings.saturdayOpeningTime);
     const [saturdayClosingTime, setSaturdayClosingTime] = useState(initialSettings.saturdayClosingTime);
+    const [ownerCommissionPct, setOwnerCommissionPct] = useState(initialSettings.ownerCommissionPct.toString());
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -27,6 +28,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 closingTime,
                 saturdayOpeningTime,
                 saturdayClosingTime,
+                ownerCommissionPct,
             });
             if (!result.success) throw new Error(result.message);
             setMessage({ type: 'success', text: result.message });
@@ -36,6 +38,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 setClosingTime(result.settings.closingTime);
                 setSaturdayOpeningTime(result.settings.saturdayOpeningTime);
                 setSaturdayClosingTime(result.settings.saturdayClosingTime);
+                setOwnerCommissionPct(result.settings.ownerCommissionPct.toString());
             }
         } catch (err: unknown) {
             setMessage({
@@ -68,6 +71,27 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 />
                 <p className="mt-1 text-xs text-gray-500">
                     Se usa al cargar ítems de tipo Mano de obra en las OT abiertas.
+                </p>
+            </div>
+
+
+            <div>
+                <label htmlFor="ownerCommissionPct" className="block text-sm font-medium text-gray-700 mb-1">
+                    Comisión del taller (%)
+                </label>
+                <input
+                    id="ownerCommissionPct"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={ownerCommissionPct}
+                    onChange={(e) => setOwnerCommissionPct(e.target.value)}
+                    className="w-full min-h-11 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                    required
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                    El resto se asigna al mecánico automáticamente.
                 </p>
             </div>
 

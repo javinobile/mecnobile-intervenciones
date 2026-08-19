@@ -1,0 +1,2 @@
+ALTER TABLE "WorkshopSettings"
+  ADD COLUMN IF NOT EXISTS "ownerCommissionPct" INTEGER NOT NULL DEFAULT 70;
