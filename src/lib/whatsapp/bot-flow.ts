@@ -227,6 +227,33 @@ function parseHistoryIntent(text: string): { hit: boolean; plate?: string } {
     return { hit: false };
 }
 
+/**
+ * Detecta inicio de pedido de turno: "turno", saludos, o frases como
+ * "Hola, quiero pedir un turno" (texto del botón de WhatsApp en la web).
+ */
+function parseTurnoIntent(text: string): boolean {
+    const lower = normalizeBotKeyword(text);
+    if (!lower) return false;
+
+    if (START_WORDS.has(lower)) return true;
+
+    if (/\b(?:cancelar|anular)\b/.test(lower)) return false;
+
+    if (!/\bturno\b/.test(lower)) return false;
+
+    if (/^(?:hola|buenas|buen dia|hello|hi)\b/.test(lower)) return true;
+
+    if (
+        /(?:quiero|quisiera|necesito|pedir|solicitar|reservar|agendar|sacar|hacer)\b/.test(
+            lower
+        )
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
 async function getOrCreateBotUserId(): Promise<string> {
     const existing = await prisma.user.findUnique({
         where: { email: WHATSAPP_BOT_EMAIL },
@@ -1166,7 +1193,7 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
 
     if (await expireConversationIfStale(waId, conv.updatedAt, conv.step)) {
         // Si además pidió empezar, continuar abajo con flow fresco
-        if (!START_WORDS.has(lower)) return;
+        if (!parseTurnoIntent(text)) return;
         conv = await getOrCreateConversation(waId);
     }
 
@@ -1201,8 +1228,8 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         return;
     }
 
-    // Solo *turno* / saludo arranca el pedido. En IDLE, si no se entiende → menú.
-    if (START_WORDS.has(lower)) {
+    // *turno* / saludo / frases naturales arrancan el pedido. En IDLE, si no se entiende → menú.
+    if (parseTurnoIntent(text)) {
         await clearDrafts(waId);
         await prisma.whatsAppConversation.update({
             where: { waId },
@@ -1285,7 +1312,7 @@ export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promi
         const name = text.slice(0, 120);
         // Si escribió una keyword por error, no tomarla como nombre
         if (
-            START_WORDS.has(lower) ||
+            parseTurnoIntent(text) ||
             STATUS_WORDS.has(lower) ||
             parseHistoryIntent(text).hit ||
             CANCEL_WORDS.has(lower) ||
