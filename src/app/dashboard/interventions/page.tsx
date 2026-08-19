@@ -15,6 +15,7 @@ interface InterventionsPageProps {
         from?: string;
         to?: string;
         range?: string;
+        dateMode?: string;
     }>;
 }
 
@@ -29,13 +30,15 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
     const dateFrom = isAdmin ? (resolved.from || '') : '';
     const dateTo = isAdmin ? (resolved.to || '') : '';
     const range = isAdmin ? (resolved.range || '') : '';
+    const dateMode = isAdmin && resolved.dateMode === 'open' ? 'open' : 'close';
 
     const { interventions, totalPages, currentPage, totalCount, totalCost } = await getInterventionsPage(
         requestedPage,
         query,
         status,
         dateFrom,
-        dateTo
+        dateTo,
+        dateMode
     );
 
     const isFirstPage = currentPage <= 1;
@@ -50,6 +53,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
         if (dateFrom) params.set('from', dateFrom);
         if (dateTo) params.set('to', dateTo);
         if (range) params.set('range', range);
+        if (dateMode) params.set('dateMode', dateMode);
         return `/dashboard/interventions?${params.toString()}`;
     };
 
@@ -117,6 +121,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     initialFrom={dateFrom}
                     initialTo={dateTo}
                     initialRange={range}
+                    initialDateMode={dateMode}
                     isAdmin={!!isAdmin}
                 />
                 {isAdmin && (
@@ -139,7 +144,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                         <p className="font-semibold text-gray-900">{i.carPlate}</p>
                         <p className="text-sm text-gray-600">{i.carMakeModel}</p>
                         <p className="text-sm text-gray-500 mt-1">{i.ownerName}</p>
-                        <p className="text-xs text-gray-400 mt-2">{formatDate(i.dateOfIntervention)} · {i.performedByName}</p>
+                        <p className="text-xs text-gray-400 mt-2">{formatDate(i.filterDate)} · {i.performedByName}</p>
                         {isAdmin && (
                             <p className="text-xs font-medium text-emerald-700 mt-1">
                                 {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(i.cost)}
@@ -163,7 +168,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                         <tr>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT #</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{dateMode === 'close' ? 'Fecha cierre' : 'Fecha apertura'}</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehículo</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cliente</th>
                             <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Por</th>
@@ -178,7 +183,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                             <tr key={i.id} className="hover:bg-gray-50">
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm font-bold text-blue-600">{i.otNumber}</td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm">{getStatusBadge(i)}</td>
-                                <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{formatDate(i.dateOfIntervention)}</td>
+                                <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{formatDate(i.filterDate)}</td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-900">
                                     <span className="font-semibold">{i.carPlate}</span> — {i.carMakeModel}
                                 </td>

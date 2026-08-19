@@ -29,6 +29,8 @@ export interface InterventionListItem {
     /** Etiqueta a mostrar según el rol del usuario */
     displayStatus: 'ABIERTA' | 'CERRADA' | 'CANCELADA' | 'PENDIENTE_CANCELACION';
     dateOfIntervention: Date;
+    /** Fecha usada por el filtro de período (apertura/cierre). */
+    filterDate: Date;
     description: string;
     carPlate: string;
     carMakeModel: string;
@@ -55,7 +57,7 @@ export interface InterventionsPageResult {
     totalCost: number;
 }
 
-/** Interpreta YYYY-MM-DD como inicio/fin de día (UTC) para filtrar dateOfIntervention. */
+/** Interpreta YYYY-MM-DD como inicio/fin de día (UTC) para filtros de fecha. */
 function parseDateBound(isoDate: string, endOfDay: boolean): Date | null {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return null;
     const [y, m, d] = isoDate.split('-').map(Number);
@@ -112,7 +114,8 @@ export async function getInterventionsPage(
     query: string = '',
     status: string = '',
     dateFrom: string = '',
-    dateTo: string = ''
+    dateTo: string = '',
+    dateMode: 'open' | 'close' = 'close'
 ): Promise<InterventionsPageResult> {
     const empty: InterventionsPageResult = {
         interventions: [],
@@ -156,17 +159,23 @@ export async function getInterventionsPage(
     }
 
     // Rango de fechas solo aplica para ADMIN (el UI no lo envía en otros roles)
+    const normalizedDateMode: 'open' | 'close' = dateMode === 'open' ? 'open' : 'close';
     let dateClause: Prisma.InterventionWhereInput = {};
     if (isAdmin) {
         const fromBound = dateFrom ? parseDateBound(dateFrom.trim(), false) : null;
         const toBound = dateTo ? parseDateBound(dateTo.trim(), true) : null;
         if (fromBound || toBound) {
-            dateClause = {
-                dateOfIntervention: {
-                    ...(fromBound ? { gte: fromBound } : {}),
-                    ...(toBound ? { lte: toBound } : {}),
-                },
+            const range = {
+                ...(fromBound ? { gte: fromBound } : {}),
+                ...(toBound ? { lte: toBound } : {}),
             };
+
+            dateClause = normalizedDateMode === 'open'
+                ? { dateOfIntervention: range }
+                : {
+                    status: 'CERRADA',
+                    updatedAt: range,
+                };
         }
     }
 
@@ -236,6 +245,7 @@ export async function getInterventionsPage(
                 cancelRequested,
                 displayStatus,
                 dateOfIntervention: i.dateOfIntervention,
+                filterDate: normalizedDateMode === 'close' ? i.updatedAt : i.dateOfIntervention,
                 description: i.description,
                 carPlate: i.car.licensePlate,
                 carMakeModel: `${i.car.make || 'S/M'} ${i.car.model || 'S/M'}`,

@@ -10,6 +10,7 @@ interface InterventionsSearchFormProps {
     initialFrom?: string;
     initialTo?: string;
     initialRange?: string;
+    initialDateMode?: 'open' | 'close';
     isAdmin?: boolean;
 }
 
@@ -41,6 +42,7 @@ export default function InterventionsSearchForm({
     initialFrom = '',
     initialTo = '',
     initialRange = '',
+    initialDateMode = 'close',
     isAdmin = false,
 }: InterventionsSearchFormProps) {
     const router = useRouter();
@@ -51,6 +53,7 @@ export default function InterventionsSearchForm({
     const [from, setFrom] = useState(initialFrom);
     const [to, setTo] = useState(initialTo);
     const [range, setRange] = useState(initialRange);
+    const [dateMode, setDateMode] = useState<'open' | 'close'>(initialDateMode);
 
     const pushParams = (opts: {
         nextQuery: string;
@@ -58,6 +61,7 @@ export default function InterventionsSearchForm({
         nextFrom?: string;
         nextTo?: string;
         nextRange?: string;
+        nextDateMode?: 'open' | 'close';
     }) => {
         const params = new URLSearchParams(searchParams.toString());
 
@@ -74,6 +78,8 @@ export default function InterventionsSearchForm({
             if (f) params.set('from', f); else params.delete('from');
             if (t) params.set('to', t); else params.delete('to');
             if (r) params.set('range', r); else params.delete('range');
+            const dm = opts.nextDateMode ?? dateMode;
+            params.set('dateMode', dm);
         }
 
         params.set('page', '1');
@@ -88,6 +94,7 @@ export default function InterventionsSearchForm({
             nextFrom: from,
             nextTo: to,
             nextRange: range === 'week' || range === 'month' ? 'custom' : range,
+            nextDateMode: dateMode,
         });
         if (from || to) setRange(from || to ? 'custom' : '');
     };
@@ -100,6 +107,7 @@ export default function InterventionsSearchForm({
             nextFrom: from,
             nextTo: to,
             nextRange: range,
+            nextDateMode: dateMode,
         });
     };
 
@@ -117,6 +125,7 @@ export default function InterventionsSearchForm({
                 nextFrom: f,
                 nextTo: t,
                 nextRange: 'week',
+                nextDateMode: dateMode,
             });
             return;
         }
@@ -132,6 +141,7 @@ export default function InterventionsSearchForm({
                 nextFrom: f,
                 nextTo: t,
                 nextRange: 'month',
+                nextDateMode: dateMode,
             });
             return;
         }
@@ -144,6 +154,7 @@ export default function InterventionsSearchForm({
             nextFrom: '',
             nextTo: '',
             nextRange: '',
+            nextDateMode: dateMode,
         });
     };
 
@@ -179,6 +190,7 @@ export default function InterventionsSearchForm({
                         nextFrom: from,
                         nextTo: to,
                         nextRange: range,
+                        nextDateMode: dateMode,
                     })}
                     className="min-h-11 px-3 py-2 text-base border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 bg-white text-gray-800 shrink-0"
                     aria-label="Filtrar por estado"
@@ -203,6 +215,47 @@ export default function InterventionsSearchForm({
 
             {isAdmin && (
                 <div className="flex flex-col sm:flex-row flex-wrap items-stretch sm:items-center gap-2">
+                    <div className="flex items-center gap-2 px-2 py-1 rounded-lg border border-gray-300 bg-white">
+                        <span className="text-xs text-gray-500">Filtrar por</span>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setDateMode('close');
+                                pushParams({
+                                    nextQuery: query,
+                                    nextStatus: initialStatus,
+                                    nextFrom: from,
+                                    nextTo: to,
+                                    nextRange: range,
+                                    nextDateMode: 'close',
+                                });
+                            }}
+                            className={`min-h-9 px-2.5 text-xs rounded-md font-semibold ${
+                                dateMode === 'close' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                            }`}
+                        >
+                            Fecha de cierre
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setDateMode('open');
+                                pushParams({
+                                    nextQuery: query,
+                                    nextStatus: initialStatus,
+                                    nextFrom: from,
+                                    nextTo: to,
+                                    nextRange: range,
+                                    nextDateMode: 'open',
+                                });
+                            }}
+                            className={`min-h-9 px-2.5 text-xs rounded-md font-semibold ${
+                                dateMode === 'open' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700'
+                            }`}
+                        >
+                            Fecha de apertura
+                        </button>
+                    </div>
                     <div className="flex gap-1.5 flex-wrap">
                         <button
                             type="button"
@@ -263,6 +316,7 @@ export default function InterventionsSearchForm({
                                 nextFrom: from,
                                 nextTo: to,
                                 nextRange: from || to ? 'custom' : '',
+                                nextDateMode: dateMode,
                             })}
                             className="min-h-10 px-3 text-sm rounded-lg bg-gray-800 text-white font-medium hover:bg-gray-900"
                         >
