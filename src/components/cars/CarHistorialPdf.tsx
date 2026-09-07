@@ -146,23 +146,10 @@ const styles = StyleSheet.create({
         color: MUTED,
         fontStyle: 'italic',
     },
-    legacyBlock: {
-        borderWidth: 1,
-        borderColor: BORDER,
-        borderRadius: 4,
-        padding: 8,
-        marginBottom: 8,
-        backgroundColor: BRAND_SOFT,
-    },
     legacyNote: {
         fontSize: 7,
         color: MUTED,
         marginBottom: 6,
-    },
-    legacyText: {
-        fontSize: 8,
-        color: TEXT,
-        lineHeight: 1.4,
     },
 });
 
@@ -196,8 +183,13 @@ export type CarHistoryPdfData = {
     };
     owner: { name: string; dni: string | null } | null;
     interventions: CarHistoryPdfOt[];
-    /** Texto del historial del sistema previo (si hubo match por VIN). */
-    legacyHistorialText?: string | null;
+    /** Intervenciones del sistema previo, normalizadas (sin importes). */
+    legacyEntries?: {
+        dateLabel: string;
+        mileageKm: number | null;
+        description: string;
+        details: string[];
+    }[];
 };
 
 export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
@@ -293,15 +285,34 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
                 ))
             )}
 
-            {data.legacyHistorialText ? (
+            {data.legacyEntries && data.legacyEntries.length > 0 ? (
                 <>
-                    <Text style={styles.sectionTitle}>Historial anterior (sistema previo)</Text>
-                    <View style={styles.legacyBlock}>
-                        <Text style={styles.legacyNote}>
-                            Datos del sistema anterior, obtenidos por VIN del vehículo.
-                        </Text>
-                        <Text style={styles.legacyText}>{data.legacyHistorialText}</Text>
-                    </View>
+                    <Text style={styles.sectionTitle}>
+                        Historial anterior (sistema previo) ({data.legacyEntries.length})
+                    </Text>
+                    <Text style={styles.legacyNote}>
+                        Datos del sistema anterior, normalizados por VIN. Sin importes.
+                    </Text>
+                    {data.legacyEntries.map((entry, idx) => (
+                        <View key={`legacy-${idx}`} style={styles.otBlock} wrap={false}>
+                            <View style={styles.otHeader}>
+                                <Text style={styles.otTitle}>Registro anterior</Text>
+                                <Text style={styles.badge}>PREVIO</Text>
+                            </View>
+                            <Text style={styles.otMeta}>
+                                {entry.dateLabel}
+                                {entry.mileageKm != null
+                                    ? ` · ${entry.mileageKm.toLocaleString('es-AR')} km`
+                                    : ''}
+                            </Text>
+                            <Text style={styles.itemLine}>Motivo: {entry.description}</Text>
+                            {entry.details.map((detail, dIdx) => (
+                                <Text key={dIdx} style={styles.itemLine}>
+                                    • {detail}
+                                </Text>
+                            ))}
+                        </View>
+                    ))}
                 </>
             ) : null}
 

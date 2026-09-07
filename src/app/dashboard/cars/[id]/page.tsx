@@ -43,8 +43,7 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
     const { car, currentOwner, interventions } = details;
 
     const legacyResult = isAdmin ? await getLegacyHistorialForCar(car.id) : null;
-    const legacyHistorial =
-        legacyResult?.success ? (legacyResult.historial ?? null) : null;
+    const legacyEntries = legacyResult?.success ? (legacyResult.entries ?? []) : [];
 
     // Preparamos los datos del coche para pasarlos al componente de cliente
     const carDetailsForEdit = {
@@ -125,7 +124,7 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
                 {/* COLUMNA DERECHA: Historial de Intervenciones (OTs) */}
                 <div className="lg:col-span-2">
                     <InterventionHistoryCard interventions={interventions} />
-                    {isAdmin ? <LegacyHistorialPanel historial={legacyHistorial} /> : null}
+                    {isAdmin ? <LegacyHistorialPanel entries={legacyEntries} /> : null}
                 </div>
             </div>
 

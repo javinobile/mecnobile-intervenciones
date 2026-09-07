@@ -10,6 +10,13 @@ import { isMailConfigured, sendMailWithPdfAttachment } from '@/lib/mail/smtp';
 import { CarHistorialPdf, type CarHistoryPdfData } from '@/components/cars/CarHistorialPdf';
 import { sendTextMessage } from '@/lib/whatsapp/meta-client';
 import { fetchLegacyHistorialByVin } from '../../lib/legacy-historial';
+import { normalizeLegacyHistorialEntries, type LegacyHistoryEntry } from '@/lib/ai/groq-client';
+
+async function loadNormalizedLegacyEntries(vin: string): Promise<LegacyHistoryEntry[]> {
+    const legacy = await fetchLegacyHistorialByVin(vin);
+    if (!legacy?.historial) return [];
+    return normalizeLegacyHistorialEntries(legacy.historial);
+}
 
 async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | null> {
     const car = await prisma.car.findUnique({
@@ -45,7 +52,7 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
 
     if (!car) return null;
 
-    const legacy = await fetchLegacyHistorialByVin(car.vin);
+    const legacyEntries = await loadNormalizedLegacyEntries(car.vin);
 
     const owner = car.ownershipHistory[0]?.client;
     return {
@@ -75,14 +82,14 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
             notes: ot.notes,
             items: ot.items.map((i) => ({ type: i.type, description: i.description })),
         })),
-        legacyHistorialText: legacy?.historial ?? null,
+        legacyEntries,
     };
 }
 
 /** Historial del sistema previo para el detalle del vehículo (solo admin). */
 export async function getLegacyHistorialForCar(carId: string): Promise<{
     success: boolean;
-    historial?: string | null;
+    entries?: LegacyHistoryEntry[];
     message?: string;
 }> {
     const session = await requireAdmin();
@@ -98,10 +105,10 @@ export async function getLegacyHistorialForCar(carId: string): Promise<{
         return { success: false, message: 'Vehículo no encontrado.' };
     }
 
-    const legacy = await fetchLegacyHistorialByVin(car.vin);
+    const entries = await loadNormalizedLegacyEntries(car.vin);
     return {
         success: true,
-        historial: legacy?.historial ?? null,
+        entries,
     };
 }
 
