@@ -149,9 +149,42 @@ const styles = StyleSheet.create({
     legacyNote: {
         fontSize: 7,
         color: MUTED,
-        marginTop: 4,
+        marginBottom: 4,
         fontStyle: 'italic',
     },
+    table: {
+        borderWidth: 1,
+        borderColor: BORDER,
+        marginBottom: 8,
+    },
+    tableHeader: {
+        flexDirection: 'row',
+        backgroundColor: BRAND_SOFT,
+        borderBottomWidth: 1,
+        borderBottomColor: BORDER,
+    },
+    tableRow: {
+        flexDirection: 'row',
+        borderBottomWidth: 1,
+        borderBottomColor: BORDER,
+    },
+    th: {
+        fontSize: 7,
+        fontFamily: 'Helvetica-Bold',
+        color: BRAND,
+        padding: 4,
+        textTransform: 'uppercase',
+    },
+    td: {
+        fontSize: 7,
+        color: TEXT,
+        padding: 4,
+    },
+    colFecha: { width: '12%' },
+    colKm: { width: '10%' },
+    colTrabajo: { width: '26%' },
+    colDiag: { width: '26%' },
+    colRes: { width: '26%' },
 });
 
 const typeLabels: Record<string, string> = {
@@ -184,71 +217,17 @@ export type CarHistoryPdfData = {
     };
     owner: { name: string; dni: string | null } | null;
     interventions: CarHistoryPdfOt[];
-    /** Intervenciones del sistema previo, normalizadas (sin importes). */
+    /** Visitas del sistema previo: fecha, km, trabajo, diagnóstico, resultado. */
     legacyEntries?: {
         dateLabel: string;
         mileageKm: number | null;
-        description: string;
-        details: string[];
+        trabajo: string;
+        diagnostico: string;
+        resultado: string;
     }[];
 };
 
-export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => {
-    type PdfRow = {
-        key: string;
-        title: string;
-        status: string | null;
-        dateLabel: string;
-        mileageLabel: string | null;
-        description: string;
-        details: string[];
-        fromLegacy: boolean;
-        sortAt: number;
-    };
-
-    const currentRows: PdfRow[] = data.interventions.map((ot) => ({
-        key: `ot-${ot.otNumber}`,
-        title: `OT #${ot.otNumber}`,
-        status: ot.status,
-        dateLabel: ot.date.toLocaleDateString('es-AR'),
-        mileageLabel: `${ot.mileageKm.toLocaleString('es-AR')} km`,
-        description: ot.description,
-        details: [
-            ...(ot.notes ? [`Notas: ${ot.notes}`] : []),
-            ...ot.items.map((item) => `${typeLabels[item.type] || item.type}: ${item.description}`),
-        ],
-        fromLegacy: false,
-        sortAt: ot.date.getTime(),
-    }));
-
-    const legacyRows: PdfRow[] = (data.legacyEntries || []).map((entry, idx) => {
-        let sortAt = 0;
-        const m = entry.dateLabel.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-        if (m) {
-            let year = Number(m[3]);
-            if (year < 100) year += 2000;
-            const d = new Date(year, Number(m[2]) - 1, Number(m[1]));
-            if (!Number.isNaN(d.getTime())) sortAt = d.getTime();
-        }
-        return {
-            key: `legacy-${idx}`,
-            title: 'Intervención',
-            status: null,
-            dateLabel: entry.dateLabel,
-            mileageLabel:
-                entry.mileageKm != null
-                    ? `${entry.mileageKm.toLocaleString('es-AR')} km`
-                    : null,
-            description: entry.description,
-            details: entry.details,
-            fromLegacy: true,
-            sortAt,
-        };
-    });
-
-    const rows = [...currentRows, ...legacyRows].sort((a, b) => b.sortAt - a.sortAt);
-
-    return (
+export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
     <Document>
         <Page size="A4" style={styles.page}>
             <View style={styles.header}>
@@ -315,34 +294,63 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => {
             </View>
 
             <Text style={styles.sectionTitle}>
-                Intervenciones en taller ({rows.length})
+                Intervenciones en taller ({data.interventions.length})
             </Text>
 
-            {rows.length === 0 ? (
+            {data.interventions.length === 0 ? (
                 <Text style={styles.empty}>Sin órdenes de trabajo registradas.</Text>
             ) : (
-                rows.map((row) => (
-                    <View key={row.key} style={styles.otBlock} wrap={false}>
+                data.interventions.map((ot) => (
+                    <View key={ot.otNumber} style={styles.otBlock} wrap={false}>
                         <View style={styles.otHeader}>
-                            <Text style={styles.otTitle}>{row.title}</Text>
-                            {row.status ? <Text style={styles.badge}>{row.status}</Text> : null}
+                            <Text style={styles.otTitle}>OT #{ot.otNumber}</Text>
+                            <Text style={styles.badge}>{ot.status}</Text>
                         </View>
                         <Text style={styles.otMeta}>
-                            {row.dateLabel}
-                            {row.mileageLabel ? ` · ${row.mileageLabel}` : ''}
+                            {ot.date.toLocaleDateString('es-AR')} ·{' '}
+                            {ot.mileageKm.toLocaleString('es-AR')} km
                         </Text>
-                        <Text style={styles.itemLine}>Motivo: {row.description}</Text>
-                        {row.details.map((detail, idx) => (
+                        <Text style={styles.itemLine}>Motivo: {ot.description}</Text>
+                        {ot.notes ? <Text style={styles.itemLine}>Notas: {ot.notes}</Text> : null}
+                        {ot.items.map((item, idx) => (
                             <Text key={idx} style={styles.itemLine}>
-                                • {detail}
+                                • {typeLabels[item.type] || item.type}: {item.description}
                             </Text>
                         ))}
-                        {row.fromLegacy ? (
-                            <Text style={styles.legacyNote}>Dato del sistema anterior</Text>
-                        ) : null}
                     </View>
                 ))
             )}
+
+            {data.legacyEntries && data.legacyEntries.length > 0 ? (
+                <>
+                    <Text style={styles.sectionTitle}>
+                        Sistema previo ({data.legacyEntries.length})
+                    </Text>
+                    <Text style={styles.legacyNote}>Datos del sistema anterior</Text>
+                    <View style={styles.table}>
+                        <View style={styles.tableHeader} wrap={false}>
+                            <Text style={[styles.th, styles.colFecha]}>Fecha</Text>
+                            <Text style={[styles.th, styles.colKm]}>Km</Text>
+                            <Text style={[styles.th, styles.colTrabajo]}>Trabajo</Text>
+                            <Text style={[styles.th, styles.colDiag]}>Diagnóstico</Text>
+                            <Text style={[styles.th, styles.colRes]}>Resultado</Text>
+                        </View>
+                        {data.legacyEntries.map((entry, idx) => (
+                            <View key={`legacy-${idx}`} style={styles.tableRow} wrap={false}>
+                                <Text style={[styles.td, styles.colFecha]}>{entry.dateLabel}</Text>
+                                <Text style={[styles.td, styles.colKm]}>
+                                    {entry.mileageKm != null
+                                        ? entry.mileageKm.toLocaleString('es-AR')
+                                        : '—'}
+                                </Text>
+                                <Text style={[styles.td, styles.colTrabajo]}>{entry.trabajo}</Text>
+                                <Text style={[styles.td, styles.colDiag]}>{entry.diagnostico}</Text>
+                                <Text style={[styles.td, styles.colRes]}>{entry.resultado}</Text>
+                            </View>
+                        ))}
+                    </View>
+                </>
+            ) : null}
 
             <Text style={styles.footer}>
                 Documento informativo emitido por Nóbile — Servicios del automotor.
@@ -350,5 +358,4 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => {
             </Text>
         </Page>
     </Document>
-    );
-};
+);

@@ -9,13 +9,13 @@ import { getLogoBase64 } from '@/lib/pdf-logo';
 import { isMailConfigured, sendMailWithPdfAttachment } from '@/lib/mail/smtp';
 import { CarHistorialPdf, type CarHistoryPdfData } from '@/components/cars/CarHistorialPdf';
 import { sendTextMessage } from '@/lib/whatsapp/meta-client';
-import { fetchLegacyHistorialByVin } from '../../lib/legacy-historial';
-import { normalizeLegacyHistorialEntries, type LegacyHistoryEntry } from '@/lib/ai/groq-client';
+import {
+    fetchParsedLegacyHistorialByVin,
+    type LegacyHistoryEntry,
+} from '../../lib/legacy-historial';
 
 async function loadNormalizedLegacyEntries(vin: string): Promise<LegacyHistoryEntry[]> {
-    const legacy = await fetchLegacyHistorialByVin(vin);
-    if (!legacy?.historial) return [];
-    return normalizeLegacyHistorialEntries(legacy.historial);
+    return fetchParsedLegacyHistorialByVin(vin);
 }
 
 async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | null> {

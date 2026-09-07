@@ -1,66 +1,62 @@
-import { Archive, Calendar } from 'lucide-react';
-import type { LegacyHistoryEntry } from '@/lib/ai/groq-client';
+import type { LegacyHistoryEntry } from '../../../lib/legacy-historial';
 
 type LegacyHistorialPanelProps = {
     entries: LegacyHistoryEntry[];
 };
 
-/**
- * Historial del sistema previo, en el mismo formato visual que las OT locales
- * (fecha, km, motivo y detalles; sin importes).
- */
+/** Tabla compacta del historial del sistema previo (fecha, km, trabajo, diagnóstico, resultado). */
 export default function LegacyHistorialPanel({ entries }: LegacyHistorialPanelProps) {
+    if (!entries.length) {
+        return (
+            <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 mt-8">
+                <h2 className="text-xl font-bold text-gray-800 mb-2">Sistema previo</h2>
+                <p className="text-[11px] text-gray-400 italic mb-2">Datos del sistema anterior</p>
+                <p className="text-sm text-gray-500 italic">
+                    Sin historial anterior registrado para este VIN.
+                </p>
+            </div>
+        );
+    }
+
     return (
         <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-200 mt-8">
-            <h2 className="text-xl font-bold text-gray-800 mb-2 flex items-center border-b pb-3">
-                <Archive className="w-5 h-5 mr-2 text-slate-600" />
-                Historial anterior (sistema previo) ({entries.length})
+            <h2 className="text-xl font-bold text-gray-800 mb-1">
+                Sistema previo ({entries.length})
             </h2>
-            <p className="text-xs text-gray-500 mb-4">
-                Datos del sistema anterior, normalizados por VIN. Sin importes.
-            </p>
-            {entries.length === 0 ? (
-                <p className="text-sm text-gray-500 italic py-4">
-                    Sin historial anterior registrado para este VIN, o el servicio no está disponible.
-                </p>
-            ) : (
-                <div className="space-y-4">
-                    {entries.map((entry, idx) => (
-                        <div
-                            key={`${entry.dateLabel}-${idx}`}
-                            className="p-4 border border-gray-200 rounded-lg bg-slate-50/60"
-                        >
-                            <div className="flex justify-between items-start gap-3">
-                                <span className="text-sm font-bold text-slate-800">Registro anterior</span>
-                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-700">
-                                    PREVIO
-                                </span>
-                            </div>
-                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-2">
-                                <span className="inline-flex items-center">
-                                    <Calendar className="w-3 h-3 mr-1" />
+            <p className="text-[11px] text-gray-400 italic mb-4">Datos del sistema anterior</p>
+            <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full text-sm">
+                    <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-gray-600">
+                        <tr>
+                            <th className="px-3 py-2 font-semibold whitespace-nowrap">Fecha</th>
+                            <th className="px-3 py-2 font-semibold whitespace-nowrap">Km</th>
+                            <th className="px-3 py-2 font-semibold">Trabajo</th>
+                            <th className="px-3 py-2 font-semibold">Diagnóstico</th>
+                            <th className="px-3 py-2 font-semibold">Resultado</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {entries.map((entry, idx) => (
+                            <tr
+                                key={`${entry.dateLabel}-${idx}`}
+                                className="border-t border-gray-100 odd:bg-white even:bg-slate-50/60 align-top"
+                            >
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-700">
                                     {entry.dateLabel}
-                                </span>
-                                {entry.mileageKm != null ? (
-                                    <span>{entry.mileageKm.toLocaleString('es-AR')} km</span>
-                                ) : null}
-                            </div>
-                            <p className="text-sm text-gray-800 mt-2">
-                                <span className="font-medium">Motivo:</span> {entry.description}
-                            </p>
-                            {entry.details.length > 0 ? (
-                                <ul className="mt-2 space-y-1">
-                                    {entry.details.map((detail, dIdx) => (
-                                        <li key={dIdx} className="text-sm text-gray-700">
-                                            • {detail}
-                                        </li>
-                                    ))}
-                                </ul>
-                            ) : null}
-                        </div>
-                    ))}
-                </div>
-            )}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-gray-700">
+                                    {entry.mileageKm != null
+                                        ? entry.mileageKm.toLocaleString('es-AR')
+                                        : '—'}
+                                </td>
+                                <td className="px-3 py-2 text-gray-800">{entry.trabajo}</td>
+                                <td className="px-3 py-2 text-gray-700">{entry.diagnostico}</td>
+                                <td className="px-3 py-2 text-gray-700">{entry.resultado}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 }

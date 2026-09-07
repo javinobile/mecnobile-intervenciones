@@ -11,7 +11,7 @@ import {
     X,
 } from 'lucide-react';
 import { generateCarHistoryPdfBase64 } from '@/actions/car-history.actions';
-import type { LegacyHistoryEntry } from '@/lib/ai/groq-client';
+import type { LegacyHistoryEntry } from '../../../lib/legacy-historial';
 
 export type CarHistoryViewerOt = {
     id: string;
@@ -26,21 +26,6 @@ export type CarHistoryViewerOt = {
 
 type SourceFilter = 'all' | 'current' | 'legacy';
 
-type UnifiedRow = {
-    key: string;
-    source: 'current' | 'legacy';
-    title: string;
-    statusLabel: string | null;
-    statusClass: string | null;
-    date: Date | null;
-    dateLabel: string;
-    mileageKm: number | null;
-    description: string;
-    details: string[];
-    href?: string;
-    performer?: string | null;
-};
-
 function parseLegacyDate(label: string): Date | null {
     const m = label.trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
     if (!m) return null;
@@ -48,7 +33,6 @@ function parseLegacyDate(label: string): Date | null {
     const month = Number(m[2]);
     let year = Number(m[3]);
     if (year < 100) year += 2000;
-    if (!day || !month || !year) return null;
     const d = new Date(year, month - 1, day);
     return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -74,55 +58,6 @@ function statusBadge(status: string): { label: string; className: string } {
     }
 }
 
-function buildRows(
-    interventions: CarHistoryViewerOt[],
-    legacyEntries: LegacyHistoryEntry[]
-): UnifiedRow[] {
-    const current: UnifiedRow[] = interventions.map((ot) => {
-        const badge = statusBadge(ot.status);
-        const date = new Date(ot.dateOfIntervention);
-        return {
-            key: `ot-${ot.id}`,
-            source: 'current',
-            title: `OT #${ot.otNumber}`,
-            statusLabel: badge.label,
-            statusClass: badge.className,
-            date: Number.isNaN(date.getTime()) ? null : date,
-            dateLabel: Number.isNaN(date.getTime())
-                ? 'Sin fecha'
-                : date.toLocaleDateString('es-AR', {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric',
-                  }),
-            mileageKm: ot.mileageKm,
-            description: ot.description,
-            details: ot.notes ? [ot.notes] : [],
-            href: `/dashboard/interventions/${ot.id}`,
-            performer: ot.performedByName,
-        };
-    });
-
-    const legacy: UnifiedRow[] = legacyEntries.map((entry, idx) => ({
-        key: `legacy-${idx}-${entry.dateLabel}`,
-        source: 'legacy',
-        title: 'Intervención',
-        statusLabel: null,
-        statusClass: null,
-        date: parseLegacyDate(entry.dateLabel),
-        dateLabel: entry.dateLabel,
-        mileageKm: entry.mileageKm,
-        description: entry.description,
-        details: entry.details,
-    }));
-
-    return [...current, ...legacy].sort((a, b) => {
-        const at = a.date?.getTime() ?? 0;
-        const bt = b.date?.getTime() ?? 0;
-        return bt - at;
-    });
-}
-
 type CarHistoryViewerProps = {
     carId: string;
     licensePlate: string;
@@ -146,39 +81,52 @@ export default function CarHistoryViewer({
     const [printLoading, setPrintLoading] = useState(false);
     const [printError, setPrintError] = useState<string | null>(null);
 
-    const allRows = useMemo(
-        () => buildRows(interventions, legacyEntries),
-        [interventions, legacyEntries]
-    );
+    const fromBound = dateFrom ? startOfDay(new Date(`${dateFrom}T00:00:00`)) : null;
+    const toBound = dateTo ? endOfDay(new Date(`${dateTo}T00:00:00`)) : null;
+    const q = query.trim().toLowerCase();
 
-    const filtered = useMemo(() => {
-        const q = query.trim().toLowerCase();
-        const from = dateFrom ? startOfDay(new Date(`${dateFrom}T00:00:00`)) : null;
-        const to = dateTo ? endOfDay(new Date(`${dateTo}T00:00:00`)) : null;
-
-        return allRows.filter((row) => {
-            if (source !== 'all' && row.source !== source) return false;
-
-            if (from || to) {
-                if (!row.date) return false;
-                if (from && row.date < from) return false;
-                if (to && row.date > to) return false;
-            }
-
+    const filteredOts = useMemo(() => {
+        if (source === 'legacy') return [];
+        return interventions.filter((ot) => {
+            const date = new Date(ot.dateOfIntervention);
+            if (fromBound && (Number.isNaN(date.getTime()) || date < fromBound)) return false;
+            if (toBound && (Number.isNaN(date.getTime()) || date > toBound)) return false;
             if (!q) return true;
             const haystack = [
-                row.title,
-                row.description,
-                ...row.details,
-                row.performer || '',
-                row.dateLabel,
-                row.mileageKm != null ? String(row.mileageKm) : '',
+                `OT #${ot.otNumber}`,
+                ot.description,
+                ot.notes || '',
+                ot.performedByName || '',
+                String(ot.mileageKm),
             ]
                 .join(' ')
                 .toLowerCase();
             return haystack.includes(q);
         });
-    }, [allRows, query, dateFrom, dateTo, source]);
+    }, [interventions, source, fromBound, toBound, q]);
+
+    const filteredLegacy = useMemo(() => {
+        if (source === 'current') return [];
+        return legacyEntries.filter((entry) => {
+            const date = parseLegacyDate(entry.dateLabel);
+            if (fromBound && (!date || date < fromBound)) return false;
+            if (toBound && (!date || date > toBound)) return false;
+            if (!q) return true;
+            const haystack = [
+                entry.dateLabel,
+                entry.trabajo,
+                entry.diagnostico,
+                entry.resultado,
+                entry.mileageKm != null ? String(entry.mileageKm) : '',
+            ]
+                .join(' ')
+                .toLowerCase();
+            return haystack.includes(q);
+        });
+    }, [legacyEntries, source, fromBound, toBound, q]);
+
+    const totalVisible = filteredOts.length + filteredLegacy.length;
+    const totalAll = interventions.length + legacyEntries.length;
 
     useEffect(() => {
         if (!open) return;
@@ -244,8 +192,7 @@ export default function CarHistoryViewer({
                                     Historial · {licensePlate}
                                 </h2>
                                 <p className="text-sm text-gray-500 mt-1">
-                                    Órdenes actuales y registros del sistema previo. Filtros solo en
-                                    pantalla.
+                                    Órdenes actuales y registros del sistema previo.
                                 </p>
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
@@ -283,7 +230,7 @@ export default function CarHistoryViewer({
                         <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
                             <label className="flex-1 min-w-[12rem]">
                                 <span className="block text-xs font-medium text-gray-600 mb-1">
-                                    Buscar en detalle
+                                    Buscar
                                 </span>
                                 <div className="relative">
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -291,7 +238,7 @@ export default function CarHistoryViewer({
                                         type="search"
                                         value={query}
                                         onChange={(e) => setQuery(e.target.value)}
-                                        placeholder="Motivo, notas, km, mecánico…"
+                                        placeholder="Trabajo, diagnóstico, resultado…"
                                         className="w-full rounded-lg border border-gray-300 bg-white pl-9 pr-3 py-2 text-sm"
                                     />
                                 </div>
@@ -341,86 +288,136 @@ export default function CarHistoryViewer({
                             </button>
                         </div>
                         <p className="text-xs text-gray-500 mt-2">
-                            Mostrando {filtered.length} de {allRows.length} registros
+                            Mostrando {totalVisible} de {totalAll} registros
                         </p>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4">
-                        {filtered.length === 0 ? (
+                    <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-8">
+                        {totalVisible === 0 ? (
                             <div className="text-center py-16 text-gray-500">
                                 No hay registros con esos filtros.
                             </div>
-                        ) : (
-                            <div className="space-y-3 max-w-4xl mx-auto">
-                                {filtered.map((row) => {
-                                    const body = (
-                                        <>
-                                            <div className="flex justify-between items-start gap-3">
-                                                <span className="text-lg font-bold text-blue-700">
-                                                    {row.title}
-                                                </span>
-                                                {row.statusLabel ? (
-                                                    <span
-                                                        className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${row.statusClass}`}
-                                                    >
-                                                        {row.statusLabel}
-                                                    </span>
-                                                ) : null}
-                                            </div>
-                                            <p className="text-sm text-gray-800 mt-1">
-                                                <span className="font-medium">Motivo:</span>{' '}
-                                                {row.description}
-                                            </p>
-                                            {row.details.length > 0 ? (
-                                                <ul className="mt-2 space-y-1">
-                                                    {row.details.map((detail, idx) => (
-                                                        <li key={idx} className="text-sm text-gray-700">
-                                                            • {detail}
-                                                        </li>
-                                                    ))}
-                                                </ul>
-                                            ) : null}
-                                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-2">
-                                                <span className="inline-flex items-center">
-                                                    <Calendar className="w-3 h-3 mr-1" />
-                                                    {row.dateLabel}
-                                                </span>
-                                                {row.mileageKm != null ? (
-                                                    <span>
-                                                        {row.mileageKm.toLocaleString('es-AR')} km
-                                                    </span>
-                                                ) : null}
-                                                {row.performer ? (
-                                                    <span>Por: {row.performer}</span>
-                                                ) : null}
-                                            </div>
-                                            {row.source === 'legacy' ? (
-                                                <p className="text-[11px] text-gray-400 mt-2 italic">
-                                                    Dato del sistema anterior
-                                                </p>
-                                            ) : null}
-                                        </>
-                                    );
+                        ) : null}
 
-                                    const cardClass =
-                                        'block p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition bg-white';
-
-                                    if (row.href) {
+                        {filteredOts.length > 0 ? (
+                            <section className="max-w-5xl mx-auto">
+                                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                                    Sistema actual ({filteredOts.length})
+                                </h3>
+                                <div className="space-y-3">
+                                    {filteredOts.map((ot) => {
+                                        const badge = statusBadge(ot.status);
+                                        const date = new Date(ot.dateOfIntervention);
+                                        const dateLabel = Number.isNaN(date.getTime())
+                                            ? 'Sin fecha'
+                                            : date.toLocaleDateString('es-AR', {
+                                                  year: 'numeric',
+                                                  month: 'short',
+                                                  day: 'numeric',
+                                              });
                                         return (
-                                            <Link key={row.key} href={row.href} className={cardClass}>
-                                                {body}
+                                            <Link
+                                                key={ot.id}
+                                                href={`/dashboard/interventions/${ot.id}`}
+                                                className="block p-4 border border-gray-200 rounded-xl hover:bg-gray-50 transition bg-white"
+                                            >
+                                                <div className="flex justify-between items-start gap-3">
+                                                    <span className="text-lg font-bold text-blue-700">
+                                                        OT #{ot.otNumber}
+                                                    </span>
+                                                    <span
+                                                        className={`px-2 py-0.5 rounded-full text-xs font-medium shrink-0 ${badge.className}`}
+                                                    >
+                                                        {badge.label}
+                                                    </span>
+                                                </div>
+                                                <p className="text-sm text-gray-800 mt-1">
+                                                    <span className="font-medium">Motivo:</span>{' '}
+                                                    {ot.description}
+                                                </p>
+                                                {ot.notes ? (
+                                                    <p className="text-sm text-gray-700 mt-1">
+                                                        • {ot.notes}
+                                                    </p>
+                                                ) : null}
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mt-2">
+                                                    <span className="inline-flex items-center">
+                                                        <Calendar className="w-3 h-3 mr-1" />
+                                                        {dateLabel}
+                                                    </span>
+                                                    <span>
+                                                        {ot.mileageKm.toLocaleString('es-AR')} km
+                                                    </span>
+                                                    {ot.performedByName ? (
+                                                        <span>Por: {ot.performedByName}</span>
+                                                    ) : null}
+                                                </div>
                                             </Link>
                                         );
-                                    }
+                                    })}
+                                </div>
+                            </section>
+                        ) : null}
 
-                                    return (
-                                        <div key={row.key} className={cardClass}>
-                                            {body}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        )}
+                        {filteredLegacy.length > 0 ? (
+                            <section className="max-w-6xl mx-auto">
+                                <div className="mb-2">
+                                    <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                                        Sistema previo ({filteredLegacy.length})
+                                    </h3>
+                                    <p className="text-[11px] text-gray-400 italic">
+                                        Datos del sistema anterior
+                                    </p>
+                                </div>
+                                <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-gray-600">
+                                            <tr>
+                                                <th className="px-3 py-2 font-semibold whitespace-nowrap">
+                                                    Fecha
+                                                </th>
+                                                <th className="px-3 py-2 font-semibold whitespace-nowrap">
+                                                    Km
+                                                </th>
+                                                <th className="px-3 py-2 font-semibold">Trabajo</th>
+                                                <th className="px-3 py-2 font-semibold">
+                                                    Diagnóstico
+                                                </th>
+                                                <th className="px-3 py-2 font-semibold">
+                                                    Resultado
+                                                </th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredLegacy.map((entry, idx) => (
+                                                <tr
+                                                    key={`${entry.dateLabel}-${idx}`}
+                                                    className="border-t border-gray-100 odd:bg-white even:bg-slate-50/60 align-top"
+                                                >
+                                                    <td className="px-3 py-2 whitespace-nowrap text-gray-700">
+                                                        {entry.dateLabel}
+                                                    </td>
+                                                    <td className="px-3 py-2 whitespace-nowrap text-gray-700">
+                                                        {entry.mileageKm != null
+                                                            ? entry.mileageKm.toLocaleString('es-AR')
+                                                            : '—'}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-gray-800">
+                                                        {entry.trabajo}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-gray-700">
+                                                        {entry.diagnostico}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-gray-700">
+                                                        {entry.resultado}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </section>
+                        ) : null}
                     </div>
                 </div>
             ) : null}

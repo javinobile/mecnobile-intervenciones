@@ -1,7 +1,13 @@
 /**
- * Cliente del historial del sistema previo.
+ * Cliente + parseo del historial del sistema previo.
  * API: GET {URL}?vin=...  Authorization: Bearer {KEY}
- * Solo acepta VIN de 17 caracteres (patente → 400).
+ *
+ * Formato de cada visita en el texto:
+ *   DD/MM/AAAA — NNNNN km — Garantía: ...
+ *   Trabajo: ...
+ *   Diagnóstico: ...
+ *   Resultado: ...
+ *   (Repuestos / Mano de obra / Importe se ignoran)
  */
 
 const DEFAULT_TIMEOUT_MS = 8_000;
@@ -9,6 +15,15 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 export type LegacyHistorialResult = {
     vin: string;
     historial: string;
+};
+
+/** Campos relevantes del sistema viejo (sin importes). */
+export type LegacyHistoryEntry = {
+    dateLabel: string;
+    mileageKm: number | null;
+    trabajo: string;
+    diagnostico: string;
+    resultado: string;
 };
 
 export function normalizeVin(vin: string): string {
@@ -95,4 +110,90 @@ export async function fetchLegacyHistorialByVin(
     } finally {
         clearTimeout(timer);
     }
+}
+
+const ENTRY_HEADER_RE =
+    /^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*[—–\-]\s*([\d.\s]+)\s*km\b/i;
+
+function parseKm(raw: string): number | null {
+    const digits = raw.replace(/[^\d]/g, '');
+    if (!digits) return null;
+    const n = Number(digits);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function fieldValue(block: string, labels: string[]): string {
+    for (const label of labels) {
+        const re = new RegExp(`^${label}\\s*:\\s*(.*)$`, 'im');
+        const m = block.match(re);
+        if (m?.[1]?.trim()) return m[1].trim();
+    }
+    return '';
+}
+
+/**
+ * Parseo determinístico del texto del sistema viejo.
+ * Solo fecha, km, trabajo, diagnóstico y resultado.
+ */
+export function parseLegacyHistorialEntries(rawHistorial: string): LegacyHistoryEntry[] {
+    if (!rawHistorial?.trim()) return [];
+
+    let body = rawHistorial;
+    const histIdx = rawHistorial.search(/\bhistorial\s*:?\s*\n/i);
+    if (histIdx >= 0) {
+        body = rawHistorial.slice(histIdx).replace(/^\s*historial\s*:?\s*/i, '');
+    }
+
+    const lines = body.split(/\r?\n/);
+    const entries: LegacyHistoryEntry[] = [];
+    let currentHeader: { dateLabel: string; mileageKm: number | null } | null = null;
+    let currentLines: string[] = [];
+
+    const flush = () => {
+        if (!currentHeader) return;
+        const block = currentLines.join('\n');
+        const trabajo = fieldValue(block, ['Trabajo']);
+        const diagnostico = fieldValue(block, ['Diagnóstico', 'Diagnostico']);
+        const resultado = fieldValue(block, ['Resultado']);
+        if (trabajo || diagnostico || resultado || currentHeader.mileageKm != null) {
+            entries.push({
+                dateLabel: currentHeader.dateLabel,
+                mileageKm: currentHeader.mileageKm,
+                trabajo: trabajo || '—',
+                diagnostico: diagnostico || '—',
+                resultado: resultado || '—',
+            });
+        }
+        currentHeader = null;
+        currentLines = [];
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const header = trimmed.match(ENTRY_HEADER_RE);
+        if (header) {
+            flush();
+            currentHeader = {
+                dateLabel: header[1],
+                mileageKm: parseKm(header[2]),
+            };
+            currentLines = [];
+            continue;
+        }
+        if (currentHeader) {
+            currentLines.push(trimmed);
+        }
+    }
+    flush();
+
+    return entries;
+}
+
+export async function fetchParsedLegacyHistorialByVin(
+    vin: string
+): Promise<LegacyHistoryEntry[]> {
+    const legacy = await fetchLegacyHistorialByVin(vin);
+    if (!legacy?.historial) return [];
+    return parseLegacyHistorialEntries(legacy.historial);
 }
