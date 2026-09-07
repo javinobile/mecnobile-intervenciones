@@ -472,8 +472,10 @@ export interface InterventionHistoryItem {
     id: string;
     otNumber: number;
     description: string;
+    notes: string | null;
     status: InterventionStatus; // Usamos el enum de Prisma
     createdAt: Date;
+    dateOfIntervention: Date;
     mileageKm: number;
     performedBy: {
         name: string;
@@ -530,15 +532,17 @@ export async function getCarDetails(carId: string): Promise<CarDetails | null> {
                 },
                 // 2. Historial de Intervenciones (OTs)
                 interventions: {
-                    orderBy: { createdAt: 'desc' }, // Ordenar por la más reciente primero
+                    orderBy: { dateOfIntervention: 'desc' },
                     select: {
                         id: true,
                         otNumber: true,
                         description: true,
+                        notes: true,
                         status: true,
                         createdAt: true,
+                        dateOfIntervention: true,
                         mileageKm: true,
-                        performedBy: { // Datos del Staff que abrió la OT
+                        performedBy: {
                             select: {
                                 name: true
                             }
@@ -570,8 +574,10 @@ export async function getCarDetails(carId: string): Promise<CarDetails | null> {
             id: i.id,
             otNumber: i.otNumber,
             description: i.description,
+            notes: i.notes,
             status: i.status,
             createdAt: i.createdAt,
+            dateOfIntervention: i.dateOfIntervention,
             mileageKm: i.mileageKm,
             performedBy: (i.performedBy && i.performedBy.name !== null) ? { name: i.performedBy.name } : null,
         }));

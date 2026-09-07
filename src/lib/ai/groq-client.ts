@@ -203,7 +203,7 @@ function sanitizeLegacyEntry(row: unknown): LegacyHistoryEntry | null {
 }
 
 /**
- * Fallback sin IA: limpia montos del texto crudo y lo parte en bloques simples.
+ * Fallback sin IA: limpia montos del texto crudo.
  */
 export function stripLegacyHistorialCosts(raw: string): string {
     return raw
@@ -223,6 +223,151 @@ export function stripLegacyHistorialCosts(raw: string): string {
         .trim();
 }
 
+const DATE_LINE_RE =
+    /(?:^|\b)(?:fecha\s*:?\s*)?(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})(?:\b|$)/i;
+const KM_RE = /(?:^|\b)(?:km|kilometraje|od[oó]metro)\s*:?\s*([\d.]+)|([\d.]+)\s*km\b/i;
+
+function extractKmFromText(text: string): number | null {
+    const m = text.match(KM_RE);
+    if (!m) return null;
+    const raw = (m[1] || m[2] || '').replace(/\./g, '');
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function looksLikeVehicleHeader(line: string): boolean {
+    const lower = line.toLowerCase();
+    return (
+        /^(veh[ií]culo|patente|dominio|vin|chasis|marca|modelo|cliente|titular|propietario)\b/i.test(
+            lower
+        ) || /^historial\s*:?\s*$/i.test(lower)
+    );
+}
+
+/**
+ * Parseo heurístico del texto del sistema viejo en entradas tipo OT
+ * (fecha, km, motivo, detalles), sin depender de Groq.
+ */
+export function parseLegacyHistorialHeuristic(rawHistorial: string): LegacyHistoryEntry[] {
+    const cleaned = stripLegacyHistorialCosts(rawHistorial);
+    if (!cleaned) return [];
+
+    let body = cleaned;
+    const histIdx = cleaned.search(/\bhistorial\s*:?\s*\n/i);
+    if (histIdx >= 0) {
+        body = cleaned.slice(histIdx).replace(/^\s*historial\s*:?\s*/i, '');
+    }
+
+    const lines = body
+        .split(/\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) => !looksLikeVehicleHeader(l));
+
+    if (!lines.length) return [];
+
+    type Block = { dateLabel: string; lines: string[] };
+    const blocks: Block[] = [];
+    let current: Block | null = null;
+
+    const pushCurrent = () => {
+        if (current && current.lines.length) blocks.push(current);
+        current = null;
+    };
+
+    for (const line of lines) {
+        if (/^-{3,}$|^={3,}$/.test(line)) {
+            pushCurrent();
+            continue;
+        }
+
+        const dateMatch = line.match(DATE_LINE_RE);
+        const isDateOnly =
+            dateMatch &&
+            line.replace(DATE_LINE_RE, '').replace(/fecha\s*:?/i, '').trim().length < 3;
+
+        if (dateMatch && (isDateOnly || /fecha/i.test(line) || !current)) {
+            pushCurrent();
+            current = { dateLabel: dateMatch[1], lines: [] };
+            if (!isDateOnly) {
+                const rest = line
+                    .replace(DATE_LINE_RE, '')
+                    .replace(/fecha\s*:?/i, '')
+                    .trim()
+                    .replace(/^[-–—:|]\s*/, '');
+                if (rest) current.lines.push(rest);
+            }
+            continue;
+        }
+
+        if (!current) {
+            current = { dateLabel: 'Sin fecha', lines: [line] };
+        } else {
+            current.lines.push(line);
+        }
+    }
+    pushCurrent();
+
+    if (!blocks.length) {
+        return [
+            {
+                dateLabel: 'Sin fecha',
+                mileageKm: extractKmFromText(cleaned),
+                description: lines[0] || 'Trabajo en taller',
+                details: lines.slice(1, 20),
+            },
+        ];
+    }
+
+    return blocks
+        .map((block) => {
+            const joined = block.lines.join(' ');
+            const mileageKm = extractKmFromText(joined) ?? extractKmFromText(block.lines.join('\n'));
+            const detailLines = block.lines
+                .map((l) =>
+                    l
+                        .replace(KM_RE, '')
+                        .replace(/\s{2,}/g, ' ')
+                        .trim()
+                        .replace(/^[-•*]\s*/, '')
+                )
+                .filter(Boolean)
+                .filter((l) => !DATE_LINE_RE.test(l));
+
+            const description =
+                detailLines[0] ||
+                (mileageKm != null ? `Intervención a ${mileageKm.toLocaleString('es-AR')} km` : 'Trabajo en taller');
+            const details = detailLines.slice(1).slice(0, 25);
+
+            return {
+                dateLabel: block.dateLabel,
+                mileageKm,
+                description,
+                details,
+            };
+        })
+        .filter((e) => e.description || e.details.length > 0);
+}
+
+function fallbackLegacyEntries(raw: string): LegacyHistoryEntry[] {
+    const heuristic = parseLegacyHistorialHeuristic(raw);
+    if (heuristic.length > 0) return heuristic;
+    const cleaned = stripLegacyHistorialCosts(raw);
+    if (!cleaned) return [];
+    return [
+        {
+            dateLabel: 'Sin fecha',
+            mileageKm: null,
+            description: 'Trabajo en taller',
+            details: cleaned
+                .split('\n')
+                .map((l) => l.trim())
+                .filter(Boolean)
+                .slice(0, 25),
+        },
+    ];
+}
+
 /**
  * Convierte el texto libre del historial antiguo en entradas estructuradas
  * (fecha, km, motivo, detalles) sin importes, alineadas al PDF actual.
@@ -233,35 +378,26 @@ export async function normalizeLegacyHistorialEntries(
     const cleaned = stripLegacyHistorialCosts(rawHistorial);
     if (!cleaned) return [];
 
+    // Heurística primero: siempre tenemos bloques útiles aunque falle la IA.
+    const heuristic = parseLegacyHistorialHeuristic(cleaned);
+
     if (!isGroqConfigured()) {
-        return [
-            {
-                dateLabel: 'Registros anteriores',
-                mileageKm: null,
-                description: 'Historial del sistema previo',
-                details: cleaned
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                    .slice(0, 40),
-            },
-        ];
+        return heuristic.length ? heuristic : fallbackLegacyEntries(cleaned);
     }
 
     const system = [
         'Convertís historiales de taller del sistema viejo a JSON estructurado.',
         'Respondé SOLO un JSON array válido (sin markdown, sin comentarios).',
         'Cada elemento:',
-        '{"dateLabel":"DD/MM/AAAA o texto de fecha","mileageKm":number|null,"description":"motivo/trabajo","details":["detalle sin precio",...]}',
+        '{"dateLabel":"DD/MM/AAAA","mileageKm":number|null,"description":"motivo/trabajo corto","details":["detalle sin precio",...]}',
         '',
         'REGLAS:',
-        '- Extraé SOLO intervenciones / trabajos reales.',
-        '- Incluí fecha y kilometraje cuando existan.',
-        '- En details: repuestos, mano de obra y notas técnicas, SIN montos ni símbolos de dinero.',
-        '- No inventes datos que no estén en el texto.',
-        '- Omití totales, precios, IVA, formas de pago y datos de contacto del taller.',
-        '- Ordená de más reciente a más antigua si se puede inferir.',
-        '- Máximo 30 entradas.',
+        '- Una entrada por cada intervención / visita al taller.',
+        '- description: una sola frase con el motivo (como en una OT moderna).',
+        '- details: ítems cortos (repuestos, trabajos). SIN precios ni totales.',
+        '- No copies el texto crudo entero en un solo campo.',
+        '- No inventes datos. Omití cabecera del vehículo, totales e IVA.',
+        '- Orden: más reciente primero. Máximo 30 entradas.',
     ].join('\n');
 
     const user = [
@@ -271,38 +407,27 @@ export async function normalizeLegacyHistorialEntries(
         'Devolvé el JSON array.',
     ].join('\n');
 
-    const text = await callGroqChat({ system, user, temperature: 0.1, maxTokens: 2500 });
+    const text = await callGroqChat({ system, user, temperature: 0.1, maxTokens: 3500 });
     if (!text) {
-        return [
-            {
-                dateLabel: 'Registros anteriores',
-                mileageKm: null,
-                description: 'Historial del sistema previo',
-                details: cleaned
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                    .slice(0, 40),
-            },
-        ];
+        return heuristic.length ? heuristic : fallbackLegacyEntries(cleaned);
     }
 
     const arr = extractJsonArray(text);
     if (!arr) {
-        console.warn('[groq] legacy historial: JSON inválido');
-        return [
-            {
-                dateLabel: 'Registros anteriores',
-                mileageKm: null,
-                description: 'Historial del sistema previo',
-                details: cleaned
-                    .split('\n')
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                    .slice(0, 40),
-            },
-        ];
+        console.warn('[groq] legacy historial: JSON inválido, uso heurística');
+        return heuristic.length ? heuristic : fallbackLegacyEntries(cleaned);
     }
 
-    return arr.map(sanitizeLegacyEntry).filter((e): e is LegacyHistoryEntry => e != null);
+    const parsed = arr.map(sanitizeLegacyEntry).filter((e): e is LegacyHistoryEntry => e != null);
+
+    // Si la IA devolvió un único bloque con demasiados detalles (formato crudo), preferir heurística.
+    if (
+        parsed.length === 1 &&
+        parsed[0].details.length > 15 &&
+        heuristic.length > 1
+    ) {
+        return heuristic;
+    }
+
+    return parsed.length ? parsed : heuristic.length ? heuristic : fallbackLegacyEntries(cleaned);
 }
