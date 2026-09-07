@@ -1323,8 +1323,21 @@ export async function upsertInterventionItem(data: UpsertItemData): Promise<{
                 return { success: false, message: 'Indique las horas trabajadas (mayor a 0).' };
             }
             hours = new Decimal(h);
-            unitPrice = hourlyRate;
-            amount = hours.mul(unitPrice);
+            const calculated = hours.mul(hourlyRate);
+
+            // Importe opcional: si viene, pisa el cálculo horas × tarifa.
+            if (data.unitPrice != null && String(data.unitPrice).trim() !== '') {
+                const override = parseFloat(data.unitPrice);
+                if (isNaN(override) || override < 0) {
+                    return { success: false, message: 'Indique un importe de mano de obra válido.' };
+                }
+                amount = new Decimal(override);
+                // Tarifa efectiva para que "horas × unitPrice" coincida con el importe.
+                unitPrice = hours.gt(0) ? amount.div(hours) : hourlyRate;
+            } else {
+                unitPrice = hourlyRate;
+                amount = calculated;
+            }
         } else {
             const price = parseFloat(data.unitPrice || '0');
             if (isNaN(price) || price < 0) {

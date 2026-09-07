@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     upsertInterventionItem,
     deleteInterventionItem,
@@ -51,10 +51,18 @@ export default function InterventionItemsEditor({
     const formatMoney = (n: number) =>
         new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(n);
 
-    const previewAmount =
-        type === 'MANO_DE_OBRA'
-            ? (parseFloat(hours) || 0) * hourlyRate
-            : parseFloat(unitPrice) || 0;
+    const hoursNum = parseFloat(hours) || 0;
+    const calculatedLabor = hoursNum * hourlyRate;
+
+    // Si cambian las horas (o la tarifa), sincronizá el importe calculado.
+    useEffect(() => {
+        if (type !== 'MANO_DE_OBRA') return;
+        if (!hours || hoursNum <= 0) {
+            setUnitPrice('');
+            return;
+        }
+        setUnitPrice(String(Math.round(calculatedLabor * 100) / 100));
+    }, [type, hours, hoursNum, calculatedLabor, hourlyRate]);
 
     const resetForm = () => {
         setDescription('');
@@ -75,7 +83,8 @@ export default function InterventionItemsEditor({
                 type,
                 description,
                 hours: type === 'MANO_DE_OBRA' ? hours : undefined,
-                unitPrice: type !== 'MANO_DE_OBRA' ? unitPrice : undefined,
+                // Para mano de obra: importe total (calculado o editado a mano).
+                unitPrice: unitPrice || undefined,
             });
             if (!result.success) throw new Error(result.message);
             resetForm();
@@ -172,7 +181,11 @@ export default function InterventionItemsEditor({
                         <label className="block text-xs font-medium text-gray-700 mb-1">Tipo</label>
                         <select
                             value={type}
-                            onChange={(e) => setType(e.target.value)}
+                            onChange={(e) => {
+                                setType(e.target.value);
+                                setUnitPrice('');
+                                setHours('');
+                            }}
                             className={inputClass}
                         >
                             <option value="REPUESTO">Repuesto</option>
@@ -193,23 +206,40 @@ export default function InterventionItemsEditor({
                     </div>
 
                     {type === 'MANO_DE_OBRA' ? (
-                        <div>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">
-                                Horas trabajadas (tarifa {formatMoney(hourlyRate)}/h)
-                            </label>
-                            <input
-                                type="number"
-                                step="0.25"
-                                min="0.25"
-                                value={hours}
-                                onChange={(e) => setHours(e.target.value)}
-                                className={inputClass}
-                                required
-                            />
-                            <p className="mt-1 text-xs text-gray-600">
-                                Subtotal: {formatMoney(previewAmount)}
-                            </p>
-                        </div>
+                        <>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                    Horas trabajadas (tarifa {formatMoney(hourlyRate)}/h)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.25"
+                                    min="0.25"
+                                    value={hours}
+                                    onChange={(e) => setHours(e.target.value)}
+                                    className={inputClass}
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">
+                                    Importe (ARS)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={unitPrice}
+                                    onChange={(e) => setUnitPrice(e.target.value)}
+                                    className={inputClass}
+                                    required
+                                />
+                                <p className="mt-1 text-xs text-gray-600">
+                                    Calculado: {formatMoney(calculatedLabor)}. Podés ajustarlo a mano si
+                                    hace falta.
+                                </p>
+                            </div>
+                        </>
                     ) : (
                         <div>
                             <label className="block text-xs font-medium text-gray-700 mb-1">
