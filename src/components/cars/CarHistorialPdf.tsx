@@ -146,6 +146,24 @@ const styles = StyleSheet.create({
         color: MUTED,
         fontStyle: 'italic',
     },
+    legacyBlock: {
+        borderWidth: 1,
+        borderColor: BORDER,
+        borderRadius: 4,
+        padding: 8,
+        marginBottom: 8,
+        backgroundColor: BRAND_SOFT,
+    },
+    legacyNote: {
+        fontSize: 7,
+        color: MUTED,
+        marginBottom: 6,
+    },
+    legacyText: {
+        fontSize: 8,
+        color: TEXT,
+        lineHeight: 1.4,
+    },
 });
 
 const typeLabels: Record<string, string> = {
@@ -178,6 +196,8 @@ export type CarHistoryPdfData = {
     };
     owner: { name: string; dni: string | null } | null;
     interventions: CarHistoryPdfOt[];
+    /** Texto del historial del sistema previo (si hubo match por VIN). */
+    legacyHistorialText?: string | null;
 };
 
 export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
@@ -272,6 +292,18 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
                     </View>
                 ))
             )}
+
+            {data.legacyHistorialText ? (
+                <>
+                    <Text style={styles.sectionTitle}>Historial anterior (sistema previo)</Text>
+                    <View style={styles.legacyBlock}>
+                        <Text style={styles.legacyNote}>
+                            Datos del sistema anterior, obtenidos por VIN del vehículo.
+                        </Text>
+                        <Text style={styles.legacyText}>{data.legacyHistorialText}</Text>
+                    </View>
+                </>
+            ) : null}
 
             <Text style={styles.footer}>
                 Documento informativo emitido por Nóbile — Servicios del automotor.

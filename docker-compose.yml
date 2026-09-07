@@ -63,6 +63,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      # Historial del sistema previo (solo por VIN)
+      LEGACY_HISTORIAL_API_URL: ${LEGACY_HISTORIAL_API_URL:-https://historial.mecnobile.com.ar/api/v1/historial}
+      LEGACY_HISTORIAL_API_KEY: ${LEGACY_HISTORIAL_API_KEY:-}
     depends_on:
       - db
 

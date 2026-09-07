@@ -9,6 +9,7 @@ import { getLogoBase64 } from '@/lib/pdf-logo';
 import { isMailConfigured, sendMailWithPdfAttachment } from '@/lib/mail/smtp';
 import { CarHistorialPdf, type CarHistoryPdfData } from '@/components/cars/CarHistorialPdf';
 import { sendTextMessage } from '@/lib/whatsapp/meta-client';
+import { fetchLegacyHistorialByVin } from '../../lib/legacy-historial';
 
 async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | null> {
     const car = await prisma.car.findUnique({
@@ -44,6 +45,8 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
 
     if (!car) return null;
 
+    const legacy = await fetchLegacyHistorialByVin(car.vin);
+
     const owner = car.ownershipHistory[0]?.client;
     return {
         logoSrc: getLogoBase64(),
@@ -72,6 +75,33 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
             notes: ot.notes,
             items: ot.items.map((i) => ({ type: i.type, description: i.description })),
         })),
+        legacyHistorialText: legacy?.historial ?? null,
+    };
+}
+
+/** Historial del sistema previo para el detalle del vehículo (solo admin). */
+export async function getLegacyHistorialForCar(carId: string): Promise<{
+    success: boolean;
+    historial?: string | null;
+    message?: string;
+}> {
+    const session = await requireAdmin();
+    if (!session) {
+        return { success: false, message: 'Solo un administrador puede consultar el historial anterior.' };
+    }
+
+    const car = await prisma.car.findUnique({
+        where: { id: carId },
+        select: { vin: true },
+    });
+    if (!car) {
+        return { success: false, message: 'Vehículo no encontrado.' };
+    }
+
+    const legacy = await fetchLegacyHistorialByVin(car.vin);
+    return {
+        success: true,
+        historial: legacy?.historial ?? null,
     };
 }
 

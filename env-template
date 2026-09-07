@@ -41,3 +41,7 @@ SMTP_USER=
 SMTP_PASS=
 # Debe usar el dominio verificado en Mailgun, ej: Nóbile <historial@mg.tudominio.com>
 SMTP_FROM=
+
+# --- Historial antiguo (sistema previo; consulta exclusiva por VIN de 17 chars) ---
+LEGACY_HISTORIAL_API_URL=https://historial.mecnobile.com.ar/api/v1/historial
+LEGACY_HISTORIAL_API_KEY=
