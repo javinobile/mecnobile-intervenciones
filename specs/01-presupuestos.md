@@ -1,6 +1,6 @@
 # SPEC 01 — Creador de presupuestos
 
-> **Status:** Aprobado
+> **Status:** Implementado
 > **Depends on:** —
 > **Date:** 2026-11-03
 > **Objective:** Agregar una sección "Presupuestos" en el menú donde ADMIN y MECHANIC armen presupuestos de mano de obra, repuestos y trabajos de terceros, los emitan por PDF o email y opcionalmente los conviertan en OT.
