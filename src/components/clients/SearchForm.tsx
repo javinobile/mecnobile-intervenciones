@@ -12,7 +12,13 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Search } from 'lucide-react';
 
-export default function SearchForm({ initialQuery }: { initialQuery: string }) {
+export default function SearchForm({
+    initialQuery,
+    placeholder = 'Buscar por Nombre, DNI, Teléfono o Email...',
+}: {
+    initialQuery: string;
+    placeholder?: string;
+}) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -38,7 +44,7 @@ export default function SearchForm({ initialQuery }: { initialQuery: string }) {
             <input
                 type="text"
                 name="q"
-                placeholder="Buscar por Nombre, DNI, Teléfono o Email..."
+                placeholder={placeholder}
                 defaultValue={initialQuery}
                 className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 transition duration-150 text-gray-800"
             />

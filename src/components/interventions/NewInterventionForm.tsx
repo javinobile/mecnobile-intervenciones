@@ -18,39 +18,81 @@ type Step = 'search' | 'resolve' | 'details';
 const inputClass =
     'w-full min-h-11 px-4 py-2.5 border border-gray-300 rounded-lg shadow-sm focus:ring-blue-500 focus:border-blue-500 text-base';
 
+type SelectedClient = {
+    id: string;
+    fullName: string;
+    dni: string;
+    phone: string | null;
+};
+
 interface NewInterventionFormProps {
     /** Turno confirmado desde el que se abre la OT (queda vinculado). */
     appointmentId?: string;
     initialPlate?: string;
     initialDescription?: string;
+    /** Presupuesto aceptado que se convierte en OT (se copian sus ítems y queda vinculado). */
+    quoteId?: string;
+    /** Auto vinculado al presupuesto: arranca seleccionado (paso Confirmar). */
+    initialCar?: OtCarSearchResult | null;
+    /** Cliente vinculado al presupuesto. */
+    initialClient?: SelectedClient | null;
+    /** Datos libres del presupuesto para precargar el alta de propietario. */
+    initialNewClient?: { firstName: string; lastName: string; phone: string; email: string };
+    initialNotes?: string;
+    /** Ítems del presupuesto que se van a copiar a la OT (solo para mostrar). */
+    quoteItems?: { type: string; description: string; amount: number }[];
+}
+
+/** Estado inicial cuando se convierte un presupuesto: auto/cliente vinculados ya resueltos. */
+function initialSelection(initialCar?: OtCarSearchResult | null, initialClient?: SelectedClient | null) {
+    const carOwner: SelectedClient | null = initialCar?.ownerId
+        ? {
+              id: initialCar.ownerId,
+              fullName: initialCar.ownerName,
+              dni: initialCar.ownerDni || '',
+              phone: initialCar.ownerPhone,
+          }
+        : null;
+    return {
+        car: initialCar ?? null,
+        client: initialClient ?? carOwner,
+        // Solo cliente (sin auto): se arranca buscando por su DNI para elegir uno de sus autos.
+        clientOnly: !initialCar && !!initialClient,
+        // Auto sin dueño y sin cliente vinculado: hay que dar de alta al propietario.
+        needsNewClient: !!initialCar && !initialCar.ownerId && !initialClient,
+    };
 }
 
 export default function NewInterventionForm({
     appointmentId,
     initialPlate = '',
     initialDescription = '',
+    quoteId,
+    initialCar,
+    initialClient,
+    initialNewClient,
+    initialNotes = '',
+    quoteItems,
 }: NewInterventionFormProps = {}) {
     const router = useRouter();
+    const [initial] = useState(() => initialSelection(initialCar, initialClient));
 
-    const [step, setStep] = useState<Step>('search');
-    const [mode, setMode] = useState<SearchMode>('car');
-    const [searchTerm, setSearchTerm] = useState(initialPlate);
+    const [step, setStep] = useState<Step>(initial.car ? 'resolve' : 'search');
+    const [mode, setMode] = useState<SearchMode>(initial.clientOnly ? 'client' : 'car');
+    const [searchTerm, setSearchTerm] = useState(initial.clientOnly ? initial.client!.dni : initialPlate);
     const [carResults, setCarResults] = useState<OtCarSearchResult[]>([]);
     const [clientResults, setClientResults] = useState<OtClientSearchResult[]>([]);
     const [searchLoading, setSearchLoading] = useState(false);
 
-    const [selectedCar, setSelectedCar] = useState<OtCarSearchResult | null>(null);
-    const [selectedClient, setSelectedClient] = useState<{
-        id: string;
-        fullName: string;
-        dni: string;
-        phone: string | null;
-    } | null>(null);
+    const [selectedCar, setSelectedCar] = useState<OtCarSearchResult | null>(initial.car);
+    const [selectedClient, setSelectedClient] = useState<SelectedClient | null>(
+        initial.clientOnly ? null : initial.client
+    );
     /** Autos del propietario elegido (para ofrecer "usar existente" en Confirmar). */
     const [clientCars, setClientCars] = useState<OtClientSearchResult['cars']>([]);
 
     const [showNewCar, setShowNewCar] = useState(false);
-    const [showNewClient, setShowNewClient] = useState(false);
+    const [showNewClient, setShowNewClient] = useState(initial.needsNewClient);
     const [showTransferWarning, setShowTransferWarning] = useState(false);
     const [transferConfirmed, setTransferConfirmed] = useState(false);
 
@@ -60,7 +102,11 @@ export default function NewInterventionForm({
         plate: suggestedPlate, vin: '', make: '', model: '', year: '', color: '', km: '',
     });
     const [newClient, setNewClient] = useState({
-        firstName: '', lastName: '', dni: '', phone: '', email: '',
+        firstName: initialNewClient?.firstName ?? '',
+        lastName: initialNewClient?.lastName ?? '',
+        dni: '',
+        phone: initialNewClient?.phone ?? '',
+        email: initialNewClient?.email ?? '',
     });
 
     /** Auto encontrado al intentar alta nueva (conflicto VIN/patente). */
@@ -69,7 +115,7 @@ export default function NewInterventionForm({
     const [associateConfirmed, setAssociateConfirmed] = useState(false);
 
     const [description, setDescription] = useState(initialDescription);
-    const [notes, setNotes] = useState('');
+    const [notes, setNotes] = useState(initialNotes);
     const [mileageKm, setMileageKm] = useState('');
 
     const [formLoading, setFormLoading] = useState(false);
@@ -370,6 +416,7 @@ export default function NewInterventionForm({
                 notes,
                 mileageKm,
                 appointmentId,
+                quoteId,
             });
 
             if (!result.success) throw new Error(result.message);
@@ -890,6 +937,22 @@ export default function NewInterventionForm({
                             {showNewClient ? `${newClient.firstName} ${newClient.lastName} (nuevo)` : selectedClient?.fullName}
                         </p>
                     </div>
+
+                    {quoteItems && quoteItems.length > 0 && (
+                        <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-900 space-y-1">
+                            <p className="font-semibold">Ítems que se copian del presupuesto</p>
+                            <ul className="space-y-0.5">
+                                {quoteItems.map((item, i) => (
+                                    <li key={i} className="flex justify-between gap-3">
+                                        <span className="min-w-0 break-words">{item.description}</span>
+                                        <span className="shrink-0 font-medium">
+                                            {new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' }).format(item.amount)}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">

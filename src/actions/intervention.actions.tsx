@@ -652,6 +652,8 @@ export interface CreateOtPayload {
     mileageKm: string;
     /** Turno confirmado del que se abre la OT (queda vinculado para no duplicarlo) */
     appointmentId?: string;
+    /** Presupuesto ACEPTADO del que nace la OT: se copian sus ítems y queda vinculado */
+    quoteId?: string;
 }
 
 /**
@@ -690,6 +692,22 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
         }
         if (appointment.interventionId) {
             return { success: false, message: 'Ese turno ya tiene una OT abierta.' };
+        }
+    }
+
+    if (data.quoteId) {
+        const quote = await prisma.quote.findUnique({
+            where: { id: data.quoteId },
+            select: { status: true, interventionId: true },
+        });
+        if (!quote) {
+            return { success: false, message: 'El presupuesto indicado no existe.' };
+        }
+        if (quote.status !== 'ACEPTADO') {
+            return { success: false, message: 'Solo se puede convertir en OT un presupuesto aceptado.' };
+        }
+        if (quote.interventionId) {
+            return { success: false, message: 'Ese presupuesto ya fue convertido en OT.' };
         }
     }
 
@@ -821,6 +839,37 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
                 }
             }
 
+            if (data.quoteId) {
+                // Vincular primero (filtro por interventionId null + @unique): evita doble conversión
+                // si hay dos pestañas abiertas. Si falla, la transacción revierte la OT.
+                const linked = await tx.quote.updateMany({
+                    where: { id: data.quoteId, status: 'ACEPTADO', interventionId: null },
+                    data: { interventionId: intervention.id },
+                });
+                if (linked.count === 0) {
+                    throw new Error('Ese presupuesto ya fue convertido en OT.');
+                }
+
+                const quoteItems = await tx.quoteItem.findMany({
+                    where: { quoteId: data.quoteId },
+                    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+                });
+                if (quoteItems.length > 0) {
+                    await tx.interventionItem.createMany({
+                        data: quoteItems.map((item, index) => ({
+                            interventionId: intervention.id,
+                            type: item.type,
+                            description: item.description,
+                            hours: null,
+                            unitPrice: item.amount,
+                            amount: item.amount,
+                            sortOrder: index,
+                        })),
+                    });
+                    await recalculateOtCost(tx, intervention.id);
+                }
+            }
+
             return intervention;
         });
 
@@ -828,6 +877,10 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
         revalidatePath('/dashboard/cars');
         revalidatePath('/dashboard/clients');
         revalidatePath('/dashboard/turnos');
+        if (data.quoteId) {
+            revalidatePath('/dashboard/presupuestos');
+            revalidatePath(`/dashboard/presupuestos/${data.quoteId}`);
+        }
 
         return {
             success: true,

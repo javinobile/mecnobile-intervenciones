@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import {
   Car, Users, User, LogOut, Home, User2, History,
-  LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays, FileText
+  LucideProps, Menu, X, Wrench, PlusCircle, Cog, CalendarDays, FileText, Calculator
 } from 'lucide-react';
 import { ForwardRefExoticComponent, RefAttributes, useCallback, useEffect, useState } from 'react';
 import { getStaffInbox } from '@/actions/inbox.actions';
@@ -28,6 +28,7 @@ const baseNavItems: LinkItem[] = [
   { name: 'Órdenes de Trabajo', href: '/dashboard/interventions', icon: Wrench },
   { name: 'Abrir OT', href: '/dashboard/interventions/new', icon: PlusCircle },
   { name: 'Turnos', href: '/dashboard/turnos', icon: CalendarDays, staffOnly: true },
+  { name: 'Presupuestos', href: '/dashboard/presupuestos', icon: Calculator, staffOnly: true },
   { name: 'Solicitudes historial', href: '/dashboard/historial-solicitudes', icon: FileText, adminOnly: true },
   { name: 'Configuración', href: '/dashboard/settings', icon: Cog, adminOnly: true },
 ];

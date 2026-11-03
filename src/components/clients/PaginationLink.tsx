@@ -13,15 +13,17 @@ interface PaginationLinkProps {
     label: string;
     // 2. Acepta una cadena simple en lugar del objeto de componente
     iconType: 'left' | 'right';
+    /** URL de destino completa. Si no se pasa, usa la del listado de clientes. */
+    href?: string;
 }
 
-export default function PaginationLink({ page, disabled, query, label, iconType }: PaginationLinkProps) {
+export default function PaginationLink({ page, disabled, query, label, iconType, href: customHref }: PaginationLinkProps) {
 
     // 3. Selecciona el componente de icono basado en el prop simple
     const IconComponent = iconType === 'left' ? ChevronLeft : ChevronRight;
 
     // Crea la URL de destino
-    const href = `/dashboard/clients?page=${page}&q=${query}`;
+    const href = customHref ?? `/dashboard/clients?page=${page}&q=${query}`;
 
     // Estilos para el botón
     const baseClasses = "px-3 py-1 text-sm font-medium rounded-lg transition duration-150 flex items-center";

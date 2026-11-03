@@ -12,6 +12,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
     const [saturdayOpeningTime, setSaturdayOpeningTime] = useState(initialSettings.saturdayOpeningTime);
     const [saturdayClosingTime, setSaturdayClosingTime] = useState(initialSettings.saturdayClosingTime);
     const [ownerCommissionPct, setOwnerCommissionPct] = useState(initialSettings.ownerCommissionPct.toString());
+    const [quoteValidityDays, setQuoteValidityDays] = useState(initialSettings.quoteValidityDays.toString());
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -29,6 +30,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 saturdayOpeningTime,
                 saturdayClosingTime,
                 ownerCommissionPct,
+                quoteValidityDays,
             });
             if (!result.success) throw new Error(result.message);
             setMessage({ type: 'success', text: result.message });
@@ -39,6 +41,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 setSaturdayOpeningTime(result.settings.saturdayOpeningTime);
                 setSaturdayClosingTime(result.settings.saturdayClosingTime);
                 setOwnerCommissionPct(result.settings.ownerCommissionPct.toString());
+                setQuoteValidityDays(result.settings.quoteValidityDays.toString());
             }
         } catch (err: unknown) {
             setMessage({
@@ -92,6 +95,26 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
                 />
                 <p className="mt-1 text-xs text-gray-500">
                     El resto se asigna al mecánico automáticamente.
+                </p>
+            </div>
+
+            <div>
+                <label htmlFor="quoteValidityDays" className="block text-sm font-medium text-gray-700 mb-1">
+                    Validez de presupuestos (días)
+                </label>
+                <input
+                    id="quoteValidityDays"
+                    type="number"
+                    min="1"
+                    max="365"
+                    step="1"
+                    value={quoteValidityDays}
+                    onChange={(e) => setQuoteValidityDays(e.target.value)}
+                    className="w-full min-h-11 px-4 py-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                    required
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                    Se usa para calcular el &quot;válido hasta&quot; de los presupuestos nuevos. Los ya creados no cambian.
                 </p>
             </div>
 

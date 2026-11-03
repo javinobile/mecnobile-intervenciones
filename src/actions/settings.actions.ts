@@ -12,9 +12,18 @@ import {
     parseHhMm,
 } from '@/lib/workshop-schedule';
 
-export type WorkshopSettingsData = WorkshopSchedule & { hourlyRate: number; ownerCommissionPct: number };
+export type WorkshopSettingsData = WorkshopSchedule & {
+    hourlyRate: number;
+    ownerCommissionPct: number;
+    quoteValidityDays: number;
+};
 
-const EMPTY_SETTINGS: WorkshopSettingsData = { hourlyRate: 0, ownerCommissionPct: 70, ...DEFAULT_SCHEDULE };
+const EMPTY_SETTINGS: WorkshopSettingsData = {
+    hourlyRate: 0,
+    ownerCommissionPct: 70,
+    quoteValidityDays: 15,
+    ...DEFAULT_SCHEDULE,
+};
 
 export async function getWorkshopSettings(): Promise<WorkshopSettingsData> {
     const session = await getServerSession(authOptions);
@@ -37,6 +46,7 @@ export async function getWorkshopSettings(): Promise<WorkshopSettingsData> {
         saturdayOpeningTime: settings.saturdayOpeningTime,
         saturdayClosingTime: settings.saturdayClosingTime,
         ownerCommissionPct: settings.ownerCommissionPct,
+        quoteValidityDays: settings.quoteValidityDays,
     };
 }
 
@@ -49,6 +59,7 @@ export type UpdateWorkshopSettingsInput = {
     saturdayOpeningTime: string;
     saturdayClosingTime: string;
     ownerCommissionPct: string;
+    quoteValidityDays: string;
 };
 
 export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput): Promise<{
@@ -69,6 +80,11 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
     const ownerCommissionPct = parseFloat(input.ownerCommissionPct);
     if (isNaN(ownerCommissionPct) || ownerCommissionPct < 0 || ownerCommissionPct > 100) {
         return { success: false, message: 'La comisión del taller debe estar entre 0 y 100.' };
+    }
+
+    const quoteValidityDays = Number(input.quoteValidityDays);
+    if (!Number.isInteger(quoteValidityDays) || quoteValidityDays < 1 || quoteValidityDays > 365) {
+        return { success: false, message: 'La validez de los presupuestos debe ser un número entero de días entre 1 y 365.' };
     }
 
     const ranges: Array<{ label: string; open: string; close: string }> = [
@@ -106,6 +122,7 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
             saturdayOpeningTime: input.saturdayOpeningTime.trim(),
             saturdayClosingTime: input.saturdayClosingTime.trim(),
             ownerCommissionPct: Math.round(ownerCommissionPct),
+            quoteValidityDays,
         };
 
         const settings = await prisma.workshopSettings.upsert({
@@ -117,6 +134,7 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
         revalidatePath('/dashboard/settings');
         revalidatePath('/dashboard/interventions');
         revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard/presupuestos');
 
         return {
             success: true,
@@ -130,6 +148,7 @@ export async function updateWorkshopSettings(input: UpdateWorkshopSettingsInput)
                 saturdayOpeningTime: settings.saturdayOpeningTime,
                 saturdayClosingTime: settings.saturdayClosingTime,
                 ownerCommissionPct: settings.ownerCommissionPct,
+                quoteValidityDays: settings.quoteValidityDays,
             },
         };
     } catch (error) {

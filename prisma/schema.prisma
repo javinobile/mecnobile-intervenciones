@@ -33,6 +33,7 @@ model User {
   cancelRequests   Intervention[] @relation("CancelRequestedBy")
   appointments     Appointment[]  @relation("AppointmentCreatedBy")
   historyReviews   CarHistoryRequest[] @relation("HistoryReviewedBy")
+  quotesCreated    Quote[]        @relation("QuoteCreatedBy")
   passwordHash     String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
@@ -89,6 +90,7 @@ model Client {
   ownedCarsHistory CarOwnership[]
   interventions    Intervention[]
   historyRequests  CarHistoryRequest[]
+  quotes           Quote[]
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -112,6 +114,7 @@ model Car {
   interventions    Intervention[]
   appointments     Appointment[]
   historyRequests  CarHistoryRequest[]
+  quotes           Quote[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -178,6 +181,9 @@ model Intervention {
 
   /// Turno confirmado del que nació esta OT (si se abrió desde la agenda)
   appointment Appointment?
+
+  /// Presupuesto del que nació esta OT (si se convirtió desde Presupuestos)
+  quote Quote?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -312,6 +318,81 @@ model WorkshopSettings {
   /// Porcentaje del total cobrado que queda para el taller (el resto va al mecánico).
   ownerCommissionPct Int @default(70)
 
+  /// Días de validez por defecto de un presupuesto nuevo.
+  quoteValidityDays Int @default(15)
+
   updatedAt  DateTime @updatedAt
   createdAt  DateTime @default(now())
+}
+
+enum QuoteStatus {
+  BORRADOR
+  ENVIADO
+  ACEPTADO
+  RECHAZADO
+}
+
+/// Presupuesto previo a una OT. Cliente y auto pueden ser registros existentes o texto libre.
+model Quote {
+  id          String      @id @default(uuid())
+  quoteNumber Int         @unique @default(autoincrement())
+  status      QuoteStatus @default(BORRADOR)
+
+  // Vínculos opcionales con el padrón
+  clientId String?
+  client   Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  carId    String?
+  car      Car?    @relation(fields: [carId], references: [id], onDelete: SetNull)
+
+  // Snapshot / datos libres (se precargan desde Client/Car si hay vínculo; editables)
+  customerName       String
+  customerPhone      String?
+  customerEmail      String?
+  vehiclePlate       String?
+  /// Marca, modelo, año en texto libre
+  vehicleDescription String?
+
+  /// Motivo de la consulta / trabajo pedido
+  description String?
+  /// Observaciones que salen en el PDF
+  notes       String?
+
+  validUntil DateTime
+  total      Decimal  @default(0.00) @db.Decimal(10, 2)
+
+  sentAt     DateTime?
+  acceptedAt DateTime?
+  rejectedAt DateTime?
+
+  /// OT creada a partir de este presupuesto (conversión opcional)
+  interventionId String?       @unique
+  intervention   Intervention? @relation(fields: [interventionId], references: [id], onDelete: SetNull)
+
+  createdById String
+  createdBy   User   @relation("QuoteCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+
+  items QuoteItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+  @@index([clientId])
+  @@index([carId])
+}
+
+model QuoteItem {
+  id          String               @id @default(uuid())
+  quoteId     String
+  quote       Quote                @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  /// Reutiliza REPUESTO / MANO_DE_OBRA / TRABAJO_TERCERO
+  type        InterventionItemType
+  description String
+  amount      Decimal              @db.Decimal(10, 2)
+  sortOrder   Int                  @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([quoteId])
 }
