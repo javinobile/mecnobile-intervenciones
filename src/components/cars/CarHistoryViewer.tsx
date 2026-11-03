@@ -22,6 +22,8 @@ export type CarHistoryViewerOt = {
     dateOfIntervention: string;
     mileageKm: number;
     performedByName: string | null;
+    /** SPEC 02: resumen del service (null si la OT no es service). */
+    serviceSummary?: string | null;
 };
 
 type SourceFilter = 'all' | 'current' | 'legacy';
@@ -96,6 +98,7 @@ export default function CarHistoryViewer({
                 `OT #${ot.otNumber}`,
                 ot.description,
                 ot.notes || '',
+                ot.serviceSummary || '',
                 ot.performedByName || '',
                 String(ot.mileageKm),
             ]
@@ -335,6 +338,11 @@ export default function CarHistoryViewer({
                                                     <span className="font-medium">Motivo:</span>{' '}
                                                     {ot.description}
                                                 </p>
+                                                {ot.serviceSummary ? (
+                                                    <p className="text-sm text-blue-800 mt-1">
+                                                        {ot.serviceSummary}
+                                                    </p>
+                                                ) : null}
                                                 {ot.notes ? (
                                                     <p className="text-sm text-gray-700 mt-1">
                                                         • {ot.notes}

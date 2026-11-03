@@ -63,6 +63,7 @@ export default async function CarDetailPage({ params }: CarDetailPageProps) {
         dateOfIntervention: ot.dateOfIntervention.toISOString(),
         mileageKm: ot.mileageKm,
         performedByName: ot.performedBy?.name ?? null,
+        serviceSummary: ot.serviceSummary,
     }));
 
     return (

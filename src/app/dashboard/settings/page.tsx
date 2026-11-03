@@ -4,6 +4,8 @@ import { redirect } from 'next/navigation';
 import { Cog } from 'lucide-react';
 import { getWorkshopSettings } from '@/actions/settings.actions';
 import SettingsForm from '@/components/settings/SettingsForm';
+import { listServiceChecklistItems } from '@/actions/service-checklist.actions';
+import ServiceChecklistSettings from '@/components/settings/ServiceChecklistSettings';
 
 export default async function SettingsPage() {
     const session = await getServerSession(authOptions);
@@ -11,7 +13,10 @@ export default async function SettingsPage() {
         redirect('/dashboard');
     }
 
-    const settings = await getWorkshopSettings();
+    const [settings, checklistItems] = await Promise.all([
+        getWorkshopSettings(),
+        listServiceChecklistItems({ includeInactive: true }),
+    ]);
 
     return (
         <>
@@ -22,7 +27,11 @@ export default async function SettingsPage() {
             <p className="text-sm text-gray-500 mb-6">
                 Parámetros generales usados en las órdenes de trabajo y en la agenda de turnos.
             </p>
-            <SettingsForm initialSettings={settings} />
+            {/* Mobile/tablet: una columna. Desde lg: configuración general a la izquierda, catálogo a la derecha. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                <SettingsForm initialSettings={settings} />
+                <ServiceChecklistSettings initialItems={checklistItems} />
+            </div>
         </>
     );
 }

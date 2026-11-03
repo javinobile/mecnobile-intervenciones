@@ -94,6 +94,4 @@ SKIP_PROD_MIGRATE=1 SKIP_BACKUP=1 ./build-and-push.sh
 # Conservar más dumps locales
 KEEP_BACKUPS=10 ./build-and-push.sh
 
-# Entrar al VPS a mano (mismos valores que deploy.env)
-ssh -i ~/.ssh/propflow_actions -p 5924 root@149.50.134.219
 ```

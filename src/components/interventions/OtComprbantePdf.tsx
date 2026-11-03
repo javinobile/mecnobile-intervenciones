@@ -2,6 +2,7 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Image } from '@react-pdf/renderer';
 import { WORKSHOP_LETTERHEAD_CONTACT } from '@/lib/pdf-logo';
+import type { ServiceCheckStatusValue } from '@/lib/service-checklist';
 
 const BRAND = '#1F1F1F';
 const BRAND_SOFT = '#F3F3F3';
@@ -146,6 +147,10 @@ const styles = StyleSheet.create({
     colType: { width: '18%', fontSize: 8 },
     colDesc: { width: '62%', fontSize: 8 },
     colAmount: { width: '20%', fontSize: 8, textAlign: 'right' },
+    colServicePoint: { width: '64%', fontSize: 8 },
+    colServiceMark: { width: '18%', fontSize: 8, textAlign: 'center' },
+    serviceTable: { marginBottom: 10 },
+    serviceEmpty: { fontSize: 8.5, color: MUTED, marginBottom: 10 },
     totalRow: {
         flexDirection: 'row',
         justifyContent: 'flex-end',
@@ -206,6 +211,9 @@ export interface PdfData {
     car: { licensePlate: string, make: string | null, model: string | null, year: number | null, vin: string };
     owner: { name: string, dni: string | null } | null;
     performedBy: { name: string | null } | null;
+    /** SPEC 02: checklist de service (puntos ya ordenados). */
+    isService?: boolean;
+    serviceChecks?: { name: string; status: ServiceCheckStatusValue }[];
 }
 
 const formatMoney = (n: number) =>
@@ -302,6 +310,29 @@ export const OtComprobantePdf = ({ data }: { data: PdfData }) => (
                 <Text style={styles.totalLabel}>Total OT:</Text>
                 <Text style={styles.totalValue}>{formatMoney(data.cost)}</Text>
             </View>
+
+            {/* SPEC 02: el service va siempre al final, después de los ítems y el total. */}
+            {data.isService && (
+                (data.serviceChecks?.length ?? 0) > 0 ? (
+                    <View style={styles.serviceTable} wrap={false}>
+                        <Text style={styles.sectionTitle}>Service realizado</Text>
+                        <View style={styles.tableHeader}>
+                            <Text style={[styles.colServicePoint, { fontFamily: 'Helvetica-Bold' }]}>Punto</Text>
+                            <Text style={[styles.colServiceMark, { fontFamily: 'Helvetica-Bold' }]}>Revisado</Text>
+                            <Text style={[styles.colServiceMark, { fontFamily: 'Helvetica-Bold' }]}>Cambiado</Text>
+                        </View>
+                        {data.serviceChecks!.map((check, idx) => (
+                            <View key={idx} style={styles.tableRow}>
+                                <Text style={styles.colServicePoint}>{check.name}</Text>
+                                <Text style={styles.colServiceMark}>{check.status === 'REVISADO' ? 'X' : ''}</Text>
+                                <Text style={styles.colServiceMark}>{check.status === 'CAMBIADO' ? 'X' : ''}</Text>
+                            </View>
+                        ))}
+                    </View>
+                ) : (
+                    <Text style={styles.serviceEmpty}>Service (sin puntos registrados)</Text>
+                )
+            )}
 
             <Text style={styles.metadata}>
                 OT Registrada: {data.createdAt.toLocaleDateString('es-AR')} | Última Modificación: {data.updatedAt.toLocaleDateString('es-AR')}

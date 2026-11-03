@@ -185,6 +185,10 @@ model Intervention {
   /// Presupuesto del que nació esta OT (si se convirtió desde Presupuestos)
   quote Quote?
 
+  /// Marca de service. Independiente del tipo de trabajo: una reparación puede incluir un service.
+  isService     Boolean                    @default(false)
+  serviceChecks InterventionServiceCheck[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -193,6 +197,49 @@ model Intervention {
   @@index([performedById])
   @@index([cancelRequestedById])
   @@index([dateOfIntervention])
+  @@index([isService])
+}
+
+enum ServiceCheckStatus {
+  REVISADO
+  CAMBIADO
+}
+
+/// Catálogo de puntos de service, administrado por el ADMIN en Configuración.
+/// Los puntos no se borran: se desactivan (active = false).
+model ServiceChecklistItem {
+  id        String  @id @default(uuid())
+  name      String  @unique
+  sortOrder Int     @default(0)
+  active    Boolean @default(true)
+
+  checks InterventionServiceCheck[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Punto marcado en una OT. Solo existen filas para los puntos Revisado o Cambiado;
+/// "sin marcar" = no hay fila.
+model InterventionServiceCheck {
+  id             String       @id @default(uuid())
+  interventionId String
+  intervention   Intervention @relation(fields: [interventionId], references: [id], onDelete: Cascade)
+
+  checklistItemId String?
+  checklistItem   ServiceChecklistItem? @relation(fields: [checklistItemId], references: [id], onDelete: SetNull)
+
+  /// Snapshot del nombre del punto al marcarlo
+  name      String
+  /// Snapshot del orden, para listar igual que el catálogo de ese momento
+  sortOrder Int                @default(0)
+  status    ServiceCheckStatus
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([interventionId, checklistItemId])
+  @@index([interventionId])
 }
 
 enum AppointmentStatus {

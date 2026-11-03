@@ -11,6 +11,7 @@ import {
     findCarIdByNormalizedPlateExact,
     findCarIdByNormalizedPlateExactInTx,
 } from "../../lib/plate-search";
+import { formatServiceSummary } from '@/lib/service-checklist';
 
 // IMPORTACIÓN CLAVE: Función para normalizar matrículas
 
@@ -480,6 +481,8 @@ export interface InterventionHistoryItem {
     performedBy: {
         name: string;
     } | null;
+    /** SPEC 02: resumen del service (null si la OT no es service). */
+    serviceSummary: string | null;
 }
 
 // Estructura simplificada de la propiedad
@@ -546,7 +549,12 @@ export async function getCarDetails(carId: string): Promise<CarDetails | null> {
                             select: {
                                 name: true
                             }
-                        }
+                        },
+                        isService: true,
+                        serviceChecks: {
+                            orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                            select: { name: true, status: true },
+                        },
                     }
                 }
             }
@@ -580,6 +588,7 @@ export async function getCarDetails(carId: string): Promise<CarDetails | null> {
             dateOfIntervention: i.dateOfIntervention,
             mileageKm: i.mileageKm,
             performedBy: (i.performedBy && i.performedBy.name !== null) ? { name: i.performedBy.name } : null,
+            serviceSummary: i.isService ? formatServiceSummary(i.serviceChecks) : null,
         }));
 
         // Devolver el objeto final consolidado

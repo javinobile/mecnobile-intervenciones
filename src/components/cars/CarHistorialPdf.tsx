@@ -201,6 +201,8 @@ export type CarHistoryPdfOt = {
     description: string;
     notes: string | null;
     items: { type: string; description: string }[];
+    /** SPEC 02: resumen del service (null si la OT no es service). */
+    serviceSummary?: string | null;
 };
 
 export type CarHistoryPdfData = {
@@ -311,6 +313,9 @@ export const CarHistorialPdf = ({ data }: { data: CarHistoryPdfData }) => (
                             {ot.mileageKm.toLocaleString('es-AR')} km
                         </Text>
                         <Text style={styles.itemLine}>Motivo: {ot.description}</Text>
+                        {ot.serviceSummary ? (
+                            <Text style={styles.itemLine}>{ot.serviceSummary}</Text>
+                        ) : null}
                         {ot.notes ? <Text style={styles.itemLine}>Notas: {ot.notes}</Text> : null}
                         {ot.items.map((item, idx) => (
                             <Text key={idx} style={styles.itemLine}>

@@ -6,6 +6,7 @@ import {
     InterventionItemType,
     InterventionStatus,
     Prisma,
+    ServiceCheckStatus,
 } from "../../generated/prisma";
 import prisma from "../../lib/prisma";
 import { normalizeLicensePlate, validateNewLicensePlate } from "../../lib/utils";
@@ -19,6 +20,7 @@ import { renderToBuffer } from "@react-pdf/renderer";
 import { OtComprobantePdf, PdfData } from '@/components/interventions/OtComprbantePdf';
 import { Decimal } from "../../generated/prisma/runtime/library";
 import { getLogoBase64 } from '@/lib/pdf-logo';
+import type { ServiceCatalogItemDto, ServiceCheckDto } from '@/lib/service-checklist';
 
 export interface InterventionListItem {
     id: string;
@@ -37,6 +39,8 @@ export interface InterventionListItem {
     ownerName: string;
     performedByName: string;
     cost: number;
+    /** SPEC 02: la OT incluye service. */
+    isService: boolean;
 }
 
 interface ServerActionResponse {
@@ -117,7 +121,8 @@ export async function getInterventionsPage(
     status: string = '',
     dateFrom: string = '',
     dateTo: string = '',
-    dateMode: 'open' | 'close' = 'close'
+    dateMode: 'open' | 'close' = 'close',
+    service: boolean = false
 ): Promise<InterventionsPageResult> {
     const empty: InterventionsPageResult = {
         interventions: [],
@@ -188,6 +193,8 @@ export async function getInterventionsPage(
             : {}),
         ...statusClause,
         ...dateClause,
+        // SPEC 02: "Solo services"
+        ...(service ? { isService: true } : {}),
         // Mecánico/viewer: solo sus OT. Admin: todas.
         ...(!isAdmin ? { performedById: session.user.id } : {}),
     };
@@ -263,6 +270,7 @@ export async function getInterventionsPage(
                 ownerName: `${i.client.firstName} ${i.client.lastName}`,
                 performedByName: i.performedBy.name || 'Staff Desconocido',
                 cost: i.cost.toNumber(),
+                isService: i.isService,
             };
         });
 
@@ -654,6 +662,10 @@ export interface CreateOtPayload {
     appointmentId?: string;
     /** Presupuesto ACEPTADO del que nace la OT: se copian sus ítems y queda vinculado */
     quoteId?: string;
+    /** Marca "Es service" (SPEC 02). Opcional: sin este campo la OT se crea como hasta ahora. */
+    isService?: boolean;
+    /** Puntos del checklist marcados en el alta. Se ignoran si isService no es true. */
+    serviceChecks?: { checklistItemId: string; status: ServiceCheckStatus }[];
 }
 
 /**
@@ -709,6 +721,35 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
         if (quote.interventionId) {
             return { success: false, message: 'Ese presupuesto ya fue convertido en OT.' };
         }
+    }
+
+    // Checklist de service (SPEC 02): se valida antes de abrir la transacción.
+    const isService = data.isService === true;
+    let serviceCheckRows: { checklistItemId: string; name: string; sortOrder: number; status: ServiceCheckStatus }[] = [];
+    if (isService && data.serviceChecks && data.serviceChecks.length > 0) {
+        const byItem = new Map<string, ServiceCheckStatus>();
+        for (const check of data.serviceChecks) {
+            if (check.status !== 'REVISADO' && check.status !== 'CAMBIADO') {
+                return { success: false, message: 'Estado de punto del checklist inválido.' };
+            }
+            byItem.set(check.checklistItemId, check.status);
+        }
+        const catalogItems = await prisma.serviceChecklistItem.findMany({
+            where: { id: { in: [...byItem.keys()] }, active: true },
+            select: { id: true, name: true, sortOrder: true },
+        });
+        if (catalogItems.length !== byItem.size) {
+            return {
+                success: false,
+                message: 'Algún punto del checklist ya no está disponible. Revise el checklist e intente nuevamente.',
+            };
+        }
+        serviceCheckRows = catalogItems.map((item) => ({
+            checklistItemId: item.id,
+            name: item.name,
+            sortOrder: item.sortOrder,
+            status: byItem.get(item.id)!,
+        }));
     }
 
     try {
@@ -821,8 +862,15 @@ export async function createIntervention(data: CreateOtPayload): Promise<ServerA
                     notes: data.notes || null,
                     mileageKm,
                     performedById,
+                    isService,
                 },
             });
+
+            if (serviceCheckRows.length > 0) {
+                await tx.interventionServiceCheck.createMany({
+                    data: serviceCheckRows.map((row) => ({ ...row, interventionId: intervention.id })),
+                });
+            }
 
             if (data.appointmentId) {
                 // updateMany + filtro por interventionId null: evita doble OT si hay dos pestañas abiertas
@@ -936,7 +984,11 @@ export async function getInterventionDetail(id: string) {
                         name: true,
                         role: true,
                     }
-                }
+                },
+                serviceChecks: {
+                    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                    select: { checklistItemId: true, name: true, sortOrder: true, status: true },
+                },
             },
         });
 
@@ -977,6 +1029,14 @@ export async function getInterventionDetail(id: string) {
         const canRequestCancel = isTrulyOpen && (isAdmin || session.user.role === 'MECHANIC');
         const canResolveCancel = isAdmin && cancelRequested && intervention.status === 'ABIERTA';
 
+        // Puntos activos del catálogo para armar la tabla del checklist (SPEC 02).
+        // Los ya marcados en la OT vienen en serviceChecks aunque estén inactivos.
+        const serviceCatalog: ServiceCatalogItemDto[] = await prisma.serviceChecklistItem.findMany({
+            where: { active: true },
+            orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+            select: { id: true, name: true, sortOrder: true },
+        });
+
         return {
             id: intervention.id,
             otNumber: intervention.otNumber,
@@ -1016,6 +1076,9 @@ export async function getInterventionDetail(id: string) {
                 dni: intervention.client.dni,
                 address: intervention.client.address,
             },
+            isService: intervention.isService,
+            serviceChecks: intervention.serviceChecks satisfies ServiceCheckDto[],
+            serviceCatalog,
             isOpen: isTrulyOpen,
             isClosed,
             isCancelled,
@@ -1488,6 +1551,125 @@ export async function deleteInterventionItem(itemId: string, interventionId: str
     }
 }
 
+// ---------------------------------------------------------------------------
+// Checklist de service (SPEC 02)
+// Mismas reglas de edición que los ítems: assertOtEditableForItems → canMutateOt.
+// ---------------------------------------------------------------------------
+
+function revalidateServiceChecklistPaths(interventionId: string) {
+    revalidatePath(`/dashboard/interventions/${interventionId}`);
+    revalidatePath('/dashboard/interventions');
+}
+
+/**
+ * Tilda o destilda "Es service". Al destildar se borran todos los puntos marcados
+ * en la misma transacción (la confirmación la pide la UI).
+ */
+export async function setInterventionIsService(interventionId: string, isService: boolean): Promise<{
+    success: boolean;
+    message: string;
+}> {
+    const session = await getServerSession(authOptions);
+    if (!session || (session.user.role !== 'ADMIN' && session.user.role !== 'MECHANIC')) {
+        return { success: false, message: 'Acceso denegado.' };
+    }
+    if (typeof isService !== 'boolean') {
+        return { success: false, message: 'Valor inválido.' };
+    }
+
+    const openCheck = await assertOtEditableForItems(interventionId, session.user.role, session.user.id);
+    if (!openCheck.ok) return { success: false, message: openCheck.message };
+
+    try {
+        await prisma.$transaction(async (tx) => {
+            await tx.intervention.update({ where: { id: interventionId }, data: { isService } });
+            if (!isService) {
+                await tx.interventionServiceCheck.deleteMany({ where: { interventionId } });
+            }
+        });
+    } catch (error) {
+        console.error('Error setInterventionIsService:', error);
+        return { success: false, message: 'Error al actualizar la marca de service.' };
+    }
+
+    revalidateServiceChecklistPaths(interventionId);
+    return {
+        success: true,
+        message: isService ? 'OT marcada como service.' : 'La OT ya no figura como service.',
+    };
+}
+
+/**
+ * Marca un punto del checklist como REVISADO / CAMBIADO, o lo desmarca con `null` (borra la fila).
+ * Al crear la fila copia nombre y orden del catálogo (snapshot). Un punto inactivo solo se puede
+ * modificar o desmarcar si la OT ya lo tenía marcado.
+ */
+export async function setServiceCheck(
+    interventionId: string,
+    checklistItemId: string,
+    status: ServiceCheckStatus | null
+): Promise<{ success: boolean; message: string }> {
+    const session = await getServerSession(authOptions);
+    if (!session || (session.user.role !== 'ADMIN' && session.user.role !== 'MECHANIC')) {
+        return { success: false, message: 'Acceso denegado.' };
+    }
+    if (status !== null && status !== 'REVISADO' && status !== 'CAMBIADO') {
+        return { success: false, message: 'Estado de punto inválido.' };
+    }
+
+    const openCheck = await assertOtEditableForItems(interventionId, session.user.role, session.user.id);
+    if (!openCheck.ok) return { success: false, message: openCheck.message };
+
+    const ot = await prisma.intervention.findUnique({
+        where: { id: interventionId },
+        select: { isService: true },
+    });
+    if (!ot?.isService) {
+        return { success: false, message: 'La OT no está marcada como service.' };
+    }
+
+    const key = { interventionId_checklistItemId: { interventionId, checklistItemId } };
+
+    try {
+        if (status === null) {
+            await prisma.interventionServiceCheck.deleteMany({ where: { interventionId, checklistItemId } });
+        } else {
+            const existing = await prisma.interventionServiceCheck.findUnique({ where: key, select: { id: true } });
+            if (existing) {
+                // Ya marcado: solo cambia el estado; el snapshot del nombre se conserva.
+                await prisma.interventionServiceCheck.update({ where: key, data: { status } });
+            } else {
+                const item = await prisma.serviceChecklistItem.findUnique({
+                    where: { id: checklistItemId },
+                    select: { name: true, sortOrder: true, active: true },
+                });
+                if (!item) return { success: false, message: 'Punto del checklist no encontrado.' };
+                if (!item.active) {
+                    return { success: false, message: `El punto "${item.name}" está desactivado.` };
+                }
+                // upsert por si dos clicks simultáneos intentan crear la misma fila.
+                await prisma.interventionServiceCheck.upsert({
+                    where: key,
+                    update: { status },
+                    create: {
+                        interventionId,
+                        checklistItemId,
+                        name: item.name,
+                        sortOrder: item.sortOrder,
+                        status,
+                    },
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error setServiceCheck:', error);
+        return { success: false, message: 'Error al guardar el punto del checklist.' };
+    }
+
+    revalidateServiceChecklistPaths(interventionId);
+    return { success: true, message: status === null ? 'Punto desmarcado.' : 'Punto guardado.' };
+}
+
 /**
  * Transfiere el dueño del vehículo vinculado a una OT abierta y actualiza el snapshot.
  */
@@ -1679,6 +1861,10 @@ export async function generateOtPdfBase64(interventionId: string): Promise<{
                 client: true,
                 items: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] },
                 performedBy: true,
+                serviceChecks: {
+                    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                    select: { name: true, status: true },
+                },
             }
         });
 
@@ -1742,6 +1928,10 @@ export async function generateOtPdfBase64(interventionId: string): Promise<{
             performedBy: interventionData.performedBy ? {
                 name: `${interventionData.performedBy.name || 'N/A'}`,
             } : null,
+            isService: interventionData.isService,
+            serviceChecks: interventionData.isService
+                ? interventionData.serviceChecks.map((c) => ({ name: c.name, status: c.status }))
+                : [],
         };
 
         const pdfBuffer = await renderToBuffer(<OtComprobantePdf data={pdfData} />);

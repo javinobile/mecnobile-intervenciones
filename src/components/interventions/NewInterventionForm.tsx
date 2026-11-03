@@ -11,6 +11,11 @@ import {
     OtClientSearchResult,
     ExistingCarMatch,
 } from '@/actions/intervention.actions';
+import ServiceChecklist, {
+    EMPTY_SERVICE_CHECKLIST,
+    ServiceChecklistValue,
+} from '@/components/interventions/ServiceChecklist';
+import type { ServiceCatalogItemDto } from '@/lib/service-checklist';
 
 type SearchMode = 'car' | 'client';
 type Step = 'search' | 'resolve' | 'details';
@@ -41,6 +46,8 @@ interface NewInterventionFormProps {
     initialNotes?: string;
     /** Ítems del presupuesto que se van a copiar a la OT (solo para mostrar). */
     quoteItems?: { type: string; description: string; amount: number }[];
+    /** Puntos activos del catálogo de service (SPEC 02). */
+    serviceCatalog?: ServiceCatalogItemDto[];
 }
 
 /** Estado inicial cuando se convierte un presupuesto: auto/cliente vinculados ya resueltos. */
@@ -73,6 +80,7 @@ export default function NewInterventionForm({
     initialNewClient,
     initialNotes = '',
     quoteItems,
+    serviceCatalog = [],
 }: NewInterventionFormProps = {}) {
     const router = useRouter();
     const [initial] = useState(() => initialSelection(initialCar, initialClient));
@@ -117,6 +125,7 @@ export default function NewInterventionForm({
     const [description, setDescription] = useState(initialDescription);
     const [notes, setNotes] = useState(initialNotes);
     const [mileageKm, setMileageKm] = useState('');
+    const [serviceChecklist, setServiceChecklist] = useState<ServiceChecklistValue>(EMPTY_SERVICE_CHECKLIST);
 
     const [formLoading, setFormLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -417,6 +426,13 @@ export default function NewInterventionForm({
                 mileageKm,
                 appointmentId,
                 quoteId,
+                isService: serviceChecklist.isService,
+                serviceChecks: serviceChecklist.isService
+                    ? Object.entries(serviceChecklist.statuses).map(([checklistItemId, status]) => ({
+                          checklistItemId,
+                          status,
+                      }))
+                    : undefined,
             });
 
             if (!result.success) throw new Error(result.message);
@@ -953,6 +969,15 @@ export default function NewInterventionForm({
                             </ul>
                         </div>
                     )}
+
+                    <div className="p-3 rounded-lg border border-blue-100 bg-blue-50/40">
+                        <ServiceChecklist
+                            mode="controlled"
+                            catalog={serviceCatalog}
+                            value={serviceChecklist}
+                            onChange={setServiceChecklist}
+                        />
+                    </div>
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">

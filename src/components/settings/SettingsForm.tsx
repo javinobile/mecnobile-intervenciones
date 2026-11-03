@@ -56,7 +56,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Wor
     return (
         <form
             onSubmit={handleSubmit}
-            className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm max-w-lg space-y-6"
+            className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm w-full max-w-lg lg:max-w-none space-y-6"
         >
             <div>
                 <label htmlFor="hourlyRate" className="block text-sm font-medium text-gray-700 mb-1">

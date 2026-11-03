@@ -4,6 +4,7 @@ import InterventionEditForm from '@/components/interventions/InterventionsForm';
 import InterventionItemsEditor from '@/components/interventions/InterventionItemsEditor';
 import { OtCarEditPanel, OtOwnerEditPanel } from '@/components/interventions/OtContextEditPanels';
 import PdfGeneratorButton from '@/components/interventions/PdfGeneratorButton';
+import ServiceChecklist from '@/components/interventions/ServiceChecklist';
 import { Wrench, Car, User, DollarSign, Hash } from 'lucide-react';
 import Link from 'next/link';
 import { getServerSession } from 'next-auth';
@@ -87,6 +88,23 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                             </div>
                         </div>
 
+                        {/* Checklist de service (SPEC 02): checkbox + resumen acá; la tabla se abre en popup.
+                            Editable con las mismas reglas que los ítems. Si la OT no es service y ya no
+                            se puede editar, no se muestra. */}
+                        {(intervention.isService || intervention.canEditContent) && (
+                            <div className="mb-4 p-3 rounded-lg border border-blue-100 bg-blue-50/40">
+                                <ServiceChecklist
+                                    key={intervention.id}
+                                    mode="autosave"
+                                    interventionId={intervention.id}
+                                    initialIsService={intervention.isService}
+                                    initialChecks={intervention.serviceChecks}
+                                    catalog={intervention.serviceCatalog}
+                                    readOnly={!intervention.canEditContent}
+                                />
+                            </div>
+                        )}
+
                         <InterventionEditForm
                             interventionId={intervention.id}
                             initialNotes={intervention.notes}
@@ -117,6 +135,7 @@ export default async function InterventionDetailPage({ params }: InterventionDet
                             canEdit={intervention.canEditContent}
                         />
                     </section>
+
                 </div>
 
                 <div className="space-y-6">

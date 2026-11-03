@@ -1,6 +1,6 @@
 # SPEC 02 — Checklist de service en las OT
 
-> **Status:** Arpobada
+> **Status:** Implementado
 > **Depends on:** —
 > **Date:** 2026-11-03
 > **Objective:** Permitir marcar una OT como "service" y, en ese caso, registrar un checklist de puntos (configurable por el ADMIN) indicando cuáles se revisaron y cuáles se cambiaron, para que salga en el comprobante de la OT y en el historial del auto.
@@ -15,11 +15,11 @@ Hoy no hay forma de distinguir una OT de service de una reparación común, ni d
 
 - Nuevo campo `isService` en la OT: checkbox "Es service".
 - El checkbox está en el alta de la OT ("Abrir OT") y en el detalle de la OT mientras esté `ABIERTA`. Una OT `CERRADA` o `CANCELADA` lo muestra en solo lectura.
-- Si el checkbox está tildado, aparece la tabla del checklist con los puntos activos del catálogo. Cada punto puede quedar **sin marcar**, **Revisado** o **Cambiado**.
+- El checkbox va arriba, en la sección "Detalles" de la OT, junto con un resumen de lo marcado ("3 cambiados · 2 revisados") y un botón "Abrir checklist" ("Ver checklist" en solo lectura). Al tildarlo se abre un **popup** con la tabla del checklist con los puntos activos del catálogo. Cada punto puede quedar **sin marcar**, **Revisado** o **Cambiado**.
 - En el alta, los puntos marcados se guardan junto con la creación de la OT.
 - En el detalle, cada cambio en el checklist se **autoguarda** al instante. Si falla, se muestra el error y el control vuelve al valor anterior.
 - Destildar "Es service" con puntos marcados pide confirmación y borra esos puntos.
-- Permisos de edición: mismas reglas que los ítems de la OT (`canMutateOt`): ADMIN y MECHANIC según las reglas actuales, bloqueado con cancelación pendiente o con la OT no abierta. La validación está en las server actions, no solo en la UI.
+- Permisos de edición: mismas reglas que los ítems de la OT (`canMutateOt`): ADMIN y MECHANIC según las reglas actuales, bloqueado con la OT no abierta y, para el MECHANIC, también con cancelación pendiente (el ADMIN conserva la edición, igual que en los ítems). La validación está en las server actions, no solo en la UI.
 - **Catálogo de puntos configurable por ADMIN** en Configuración del taller (`/dashboard/settings`): agregar, renombrar, reordenar y desactivar/reactivar puntos.
 - Un punto desactivado no se ofrece en OT nuevas ni en OT abiertas que no lo tengan marcado, pero las OT que ya lo usaron lo siguen mostrando.
 - El nombre del punto se copia (snapshot) en cada OT al marcarlo: renombrar o desactivar un punto del catálogo no altera OT pasadas.
@@ -123,9 +123,9 @@ type ServiceCheckDto = {
 4. **Actions del checklist en la OT** (en `src/actions/intervention.actions.tsx`, reutilizando `assertOtEditableForItems`): `setInterventionIsService(interventionId, isService)` — al pasar a `false` borra todas las filas en la misma transacción — y `setServiceCheck(interventionId, checklistItemId, status | null)` — `null` borra la fila; si no existe la crea copiando `name` y `sortOrder` del catálogo; rechaza si la OT no es service o si el punto está inactivo y la OT no lo tenía. `revalidatePath` del detalle y del listado.
 5. **`getInterventionDetail`** devuelve `isService` y `serviceChecks: ServiceCheckDto[]` ordenados por `sortOrder`, más los puntos activos del catálogo para armar la tabla.
 6. **Componente `src/components/interventions/ServiceChecklist.tsx`** (client): checkbox "Es service" + tabla con, por punto, un control de tres estados (Sin marcar / Revisado / Cambiado). Filas = puntos activos del catálogo ∪ puntos ya marcados en la OT (aunque estén inactivos). Modo controlado (para el alta) y modo autoguardado con `interventionId` (para el detalle), con revert y mensaje de error si falla. Destildar con puntos marcados abre confirmación. Modo solo lectura para OT no editables.
-7. **Detalle de la OT** (`src/app/dashboard/interventions/[id]/page.tsx`): montar `ServiceChecklist` en modo autoguardado; en solo lectura si la OT no está `ABIERTA` o el usuario no puede editarla. Si la OT no es service y no es editable, no se muestra la sección.
+7. **Detalle de la OT** (`src/app/dashboard/interventions/[id]/page.tsx`): montar `ServiceChecklist` en modo autoguardado dentro de la sección "Detalles" (arriba, antes del formulario de la OT), con el checkbox y el resumen en línea y la tabla en un popup; en solo lectura si la OT no está `ABIERTA` o el usuario no puede editarla. Si la OT no es service y no es editable, no se muestra.
 8. **Alta de la OT** (`NewInterventionForm.tsx` + `CreateOtPayload` + `createIntervention`): montar `ServiceChecklist` en modo controlado; enviar `isService` y `serviceChecks: { checklistItemId, status }[]` opcionales; `createIntervention` crea las filas en la misma transacción. Sin esos campos el alta se comporta igual que hoy (incluida la conversión desde presupuesto y desde turno).
-9. **Comprobante PDF** (`OtComprbantePdf.tsx` + `generateOtPdfBase64`): sección "Service realizado" con tabla Punto · Revisado · Cambiado (marca en la columna que corresponda) solo si `isService` y hay puntos marcados. Si es service sin puntos marcados, una línea "Service (sin puntos registrados)".
+9. **Comprobante PDF** (`OtComprbantePdf.tsx` + `generateOtPdfBase64`): sección "Service realizado" con tabla Punto · Revisado · Cambiado (marca en la columna que corresponda) solo si `isService` y hay puntos marcados, ubicada siempre al final del comprobante (después de los ítems y el total; si la OT no tiene ítems, solo se ve la tabla). Si es service sin puntos marcados, una línea "Service (sin puntos registrados)".
 10. **Historial del auto**: helper `formatServiceSummary(checks)` (en `lib/` o `src/lib/`) que arma el texto `Service — Cambiado: … Revisado: …` (omite el grupo vacío). Usarlo en `CarHistorialPdf.tsx` (vía `generateCarHistoryPdfBase64`, que alimenta también el email de `approveCarHistoryRequest`) y en `CarHistoryViewer.tsx`.
 11. **Listado de OT**: `getInterventionsPage` acepta `service?: boolean` y filtra por `isService`; `InterventionsSearchForm.tsx` agrega el checkbox "Solo services" que escribe/borra `?service=1` y resetea la página; badge "Service" en cada fila con `isService`.
 
@@ -141,7 +141,7 @@ type ServiceCheckDto = {
 - [ ] En el detalle, cambiar un punto a Revisado, luego a Cambiado y luego a Sin marcar deja, tras cada recarga, la fila con el estado correspondiente y finalmente sin fila.
 - [ ] Destildar "Es service" con puntos marcados pide confirmación; al cancelar no cambia nada; al confirmar queda `isService = false` y sin filas.
 - [ ] En una OT `CERRADA` o `CANCELADA`, el checkbox y el checklist se ven deshabilitados, y llamar a `setServiceCheck` / `setInterventionIsService` sobre ella devuelve error.
-- [ ] Con cancelación pendiente, las mismas actions devuelven error, igual que `upsertInterventionItem`.
+- [x] Con cancelación pendiente, un MECHANIC recibe error en las mismas actions, igual que con `upsertInterventionItem`; el ADMIN conserva la edición (mismas reglas que los ítems).
 - [ ] Renombrar un punto del catálogo no cambia el nombre que muestra una OT donde ya estaba marcado.
 - [ ] Desactivar un punto lo saca de la tabla de OT nuevas, pero una OT que lo tenía marcado lo sigue mostrando con su estado.
 - [ ] El comprobante PDF de una OT de service muestra la sección "Service realizado" con una fila por punto marcado y la marca en la columna Revisado o Cambiado; una OT sin service no muestra la sección.
@@ -163,6 +163,8 @@ type ServiceCheckDto = {
 - **Sí:** solo se guardan filas para los puntos marcados. "Sin marcar" no ocupa espacio y el resumen se arma directo de las filas.
 - **Sí:** snapshot del nombre (y del orden) en cada punto marcado, y desactivar en vez de borrar. El historial de un auto no debe cambiar porque se renombró o se dio de baja un punto.
 - **Sí:** destildar "Es service" borra los puntos, con confirmación. Conservarlos ocultos dejaría datos que no se ven en ningún lado.
+- **Sí:** checkbox y resumen arriba en "Detalles", tabla en un popup. Cambio pedido por el usuario durante la implementación: al final de la página había que scrollear mucho para encontrar el check. El resumen en línea evita que lo marcado quede oculto al cerrar el popup.
+- **No:** tabla del checklist en línea al final del detalle. Primera versión implementada; quedaba fuera de vista.
 - **Sí:** autoguardado por click en el detalle. El mecánico lo completa con el auto delante; un botón "Guardar" se olvida fácil.
 - **Sí:** mismos permisos que los ítems (`canMutateOt`). No se inventa una regla nueva para algo que se edita en la misma pantalla.
 - **No:** vincular el checklist con ítems/costos. El checklist es registro técnico; los repuestos se cobran como ítems, como hoy.

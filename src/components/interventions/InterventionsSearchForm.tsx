@@ -11,6 +11,7 @@ interface InterventionsSearchFormProps {
     initialTo?: string;
     initialRange?: string;
     initialDateMode?: 'open' | 'close';
+    initialOnlyService?: boolean;
     isAdmin?: boolean;
 }
 
@@ -43,6 +44,7 @@ export default function InterventionsSearchForm({
     initialTo = '',
     initialRange = '',
     initialDateMode = 'close',
+    initialOnlyService = false,
     isAdmin = false,
 }: InterventionsSearchFormProps) {
     const router = useRouter();
@@ -62,6 +64,7 @@ export default function InterventionsSearchForm({
         nextTo?: string;
         nextRange?: string;
         nextDateMode?: 'open' | 'close';
+        nextOnlyService?: boolean;
     }) => {
         const params = new URLSearchParams(searchParams.toString());
 
@@ -80,6 +83,12 @@ export default function InterventionsSearchForm({
             if (r) params.set('range', r); else params.delete('range');
             const dm = opts.nextDateMode ?? dateMode;
             params.set('dateMode', dm);
+        }
+
+        // SPEC 02: "Solo services" (si no se indica, se conserva el valor actual de la URL)
+        if (opts.nextOnlyService !== undefined) {
+            if (opts.nextOnlyService) params.set('service', '1');
+            else params.delete('service');
         }
 
         params.set('page', '1');
@@ -203,6 +212,24 @@ export default function InterventionsSearchForm({
                         <option value="PENDIENTE_CANCELACION">Pend. cancelación</option>
                     )}
                 </select>
+
+                <label className="min-h-11 flex items-center gap-2 px-3 border border-gray-300 rounded-lg bg-white text-sm text-gray-800 shrink-0 cursor-pointer select-none">
+                    <input
+                        type="checkbox"
+                        checked={initialOnlyService}
+                        onChange={(e) => pushParams({
+                            nextQuery: query,
+                            nextStatus: initialStatus,
+                            nextFrom: from,
+                            nextTo: to,
+                            nextRange: range,
+                            nextDateMode: dateMode,
+                            nextOnlyService: e.target.checked,
+                        })}
+                        className="w-4 h-4"
+                    />
+                    Solo services
+                </label>
 
                 <button
                     type="submit"

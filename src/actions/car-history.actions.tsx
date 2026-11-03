@@ -9,6 +9,7 @@ import { getLogoBase64 } from '@/lib/pdf-logo';
 import { isMailConfigured, sendMailWithPdfAttachment } from '@/lib/mail/smtp';
 import { CarHistorialPdf, type CarHistoryPdfData } from '@/components/cars/CarHistorialPdf';
 import { sendTextMessage } from '@/lib/whatsapp/meta-client';
+import { formatServiceSummary } from '@/lib/service-checklist';
 import {
     fetchParsedLegacyHistorialByVin,
     type LegacyHistoryEntry,
@@ -44,6 +45,11 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
                     items: {
                         orderBy: { sortOrder: 'asc' },
                         select: { type: true, description: true },
+                    },
+                    isService: true,
+                    serviceChecks: {
+                        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+                        select: { name: true, status: true },
                     },
                 },
             },
@@ -81,6 +87,7 @@ async function buildHistoryPdfData(carId: string): Promise<CarHistoryPdfData | n
             description: ot.description,
             notes: ot.notes,
             items: ot.items.map((i) => ({ type: i.type, description: i.description })),
+            serviceSummary: ot.isService ? formatServiceSummary(ot.serviceChecks) : null,
         })),
         legacyEntries,
     };

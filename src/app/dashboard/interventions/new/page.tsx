@@ -1,6 +1,7 @@
 import NewInterventionForm from '@/components/interventions/NewInterventionForm';
 import { getAppointmentForOt } from '@/actions/appointment.actions';
 import { getQuoteForOt } from '@/actions/quote.actions';
+import { listServiceChecklistItems } from '@/actions/service-checklist.actions';
 import { formatDateTimeEsAr } from '@/lib/whatsapp/phone';
 import { Calculator, CalendarCheck, Wrench } from 'lucide-react';
 
@@ -21,6 +22,9 @@ export default async function NewInterventionPage({ searchParams }: NewIntervent
         : null;
 
     const quote = params.presupuesto ? await getQuoteForOt(params.presupuesto) : null;
+
+    // Puntos activos del checklist de service (SPEC 02)
+    const serviceCatalog = (await listServiceChecklistItems()).map(({ id, name, sortOrder }) => ({ id, name, sortOrder }));
 
     const initialPlate = quote?.vehiclePlate ?? appointment?.licensePlate ?? params.plate ?? '';
     const initialDescription = quote
@@ -117,6 +121,7 @@ export default async function NewInterventionPage({ searchParams }: NewIntervent
                 initialNewClient={initialNewClient}
                 initialNotes={quote?.notes ?? ''}
                 quoteItems={quote?.items}
+                serviceCatalog={serviceCatalog}
             />
         </>
     );

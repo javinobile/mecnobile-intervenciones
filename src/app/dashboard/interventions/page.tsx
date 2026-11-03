@@ -1,6 +1,6 @@
 // app/(dashboard)/interventions/page.tsx
 import Link from 'next/link';
-import { Wrench, PlusCircle, Clock, CheckCircle, XCircle, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Wrench, PlusCircle, Clock, CheckCircle, XCircle, ChevronLeft, ChevronRight, AlertTriangle, ClipboardCheck } from 'lucide-react';
 import { getInterventionsPage, InterventionListItem } from '@/actions/intervention.actions';
 import InterventionsSearchForm from '@/components/interventions/InterventionsSearchForm';
 import OtTotalsSummary from '@/components/interventions/OtTotalsSummary';
@@ -17,6 +17,7 @@ interface InterventionsPageProps {
         to?: string;
         range?: string;
         dateMode?: string;
+        service?: string;
     }>;
 }
 
@@ -32,6 +33,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
     const dateTo = isAdmin ? (resolved.to || '') : '';
     const range = isAdmin ? (resolved.range || '') : '';
     const dateMode = isAdmin && resolved.dateMode === 'open' ? 'open' : 'close';
+    const onlyService = resolved.service === '1';
 
     const workshopSettings = isAdmin ? await getWorkshopSettings() : null;
 
@@ -41,12 +43,13 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
         status,
         dateFrom,
         dateTo,
-        dateMode
+        dateMode,
+        onlyService
     );
 
     const isFirstPage = currentPage <= 1;
     const isLastPage = currentPage >= totalPages;
-    const hasFilters = !!(query || status || dateFrom || dateTo);
+    const hasFilters = !!(query || status || dateFrom || dateTo || onlyService);
 
     const pageHref = (page: number) => {
         const params = new URLSearchParams();
@@ -57,6 +60,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
         if (dateTo) params.set('to', dateTo);
         if (range) params.set('range', range);
         if (dateMode) params.set('dateMode', dateMode);
+        if (onlyService) params.set('service', '1');
         return `/dashboard/interventions?${params.toString()}`;
     };
 
@@ -125,6 +129,7 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     initialTo={dateTo}
                     initialRange={range}
                     initialDateMode={dateMode}
+                    initialOnlyService={onlyService}
                     isAdmin={!!isAdmin}
                 />
                 {isAdmin && (
@@ -147,7 +152,10 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                     >
                         <div className="flex items-start justify-between gap-2 mb-2">
                             <span className="text-lg font-bold text-blue-600">OT #{i.otNumber}</span>
-                            {getStatusBadge(i)}
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                                {i.isService && <ServiceBadge />}
+                                {getStatusBadge(i)}
+                            </div>
                         </div>
                         <p className="font-semibold text-gray-900">{i.carPlate}</p>
                         <p className="text-sm text-gray-600">{i.carMakeModel}</p>
@@ -190,7 +198,12 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                         {interventions.map((i) => (
                             <tr key={i.id} className="hover:bg-gray-50">
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm font-bold text-blue-600">{i.otNumber}</td>
-                                <td className="px-3 py-2.5 whitespace-nowrap text-sm">{getStatusBadge(i)}</td>
+                                <td className="px-3 py-2.5 whitespace-nowrap text-sm">
+                                    <div className="flex items-center gap-1.5">
+                                        {getStatusBadge(i)}
+                                        {i.isService && <ServiceBadge />}
+                                    </div>
+                                </td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-500">{formatDate(i.filterDate)}</td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-sm text-gray-900">
                                     <span className="font-semibold">{i.carPlate}</span> — {i.carMakeModel}
@@ -231,6 +244,14 @@ export default async function InterventionsPage({ searchParams }: InterventionsP
                 </div>
             )}
         </>
+    );
+}
+
+function ServiceBadge() {
+    return (
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+            <ClipboardCheck className="w-3.5 h-3.5 mr-1" /> Service
+        </span>
     );
 }
 
