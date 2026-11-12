@@ -5,6 +5,17 @@ import { handleIncomingWhatsAppMessage } from '@/lib/whatsapp/bot-flow';
 
 export const runtime = 'nodejs';
 
+/** Tipos de mensaje a los que el bot responde "solo leo texto". */
+const UNSUPPORTED_MESSAGE_TYPES = new Set([
+    'audio',
+    'image',
+    'video',
+    'document',
+    'sticker',
+    'location',
+    'contacts',
+]);
+
 /** Verificación del webhook (Meta envía hub.mode / hub.verify_token / hub.challenge). */
 export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
@@ -82,7 +93,18 @@ export async function POST(request: NextRequest) {
                         buttonId =
                             message.interactive?.button_reply?.id ||
                             message.interactive?.list_reply?.id;
+                    } else if (UNSUPPORTED_MESSAGE_TYPES.has(message.type || '')) {
+                        // Audio, imagen, ubicación, etc.: el bot avisa que solo lee texto.
+                        tasks.push(
+                            handleIncomingWhatsAppMessage({ from, text: '', unsupported: true }).catch(
+                                (err) => {
+                                    console.error('Error handling unsupported WA message:', err);
+                                }
+                            )
+                        );
+                        continue;
                     } else {
+                        // reaction, system, etc.: se ignoran sin responder.
                         continue;
                     }
 

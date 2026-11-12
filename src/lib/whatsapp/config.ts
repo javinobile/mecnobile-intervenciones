@@ -20,8 +20,19 @@ export function getWhatsAppConfig() {
         appId: process.env.META_APP_ID || '',
         templateConfirmado: process.env.WHATSAPP_TEMPLATE_TURNO_CONFIRMADO || 'turno_confirmado',
         templateAlternativas: process.env.WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS || 'turno_alternativas',
+        templateHistorialAprobado:
+            process.env.WHATSAPP_TEMPLATE_HISTORIAL_APROBADO || 'historial_aprobado',
+        templateHistorialRechazado:
+            process.env.WHATSAPP_TEMPLATE_HISTORIAL_RECHAZADO || 'historial_rechazado',
         templateLanguage: process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'es_AR',
     };
 }
 
 export const WHATSAPP_BOT_EMAIL = 'whatsapp-bot@mecnobile.local';
+
+/** Teléfono que se muestra en "Hablar con el taller". Configurable por env. */
+export const DEFAULT_WORKSHOP_CONTACT_PHONE = '3482220236';
+
+export function getWorkshopContactPhone(): string {
+    return process.env.WORKSHOP_CONTACT_PHONE?.trim() || DEFAULT_WORKSHOP_CONTACT_PHONE;
+}

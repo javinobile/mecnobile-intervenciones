@@ -8,7 +8,7 @@ import { requireAdmin } from '@/lib/auth-guards';
 import { getLogoBase64 } from '@/lib/pdf-logo';
 import { isMailConfigured, sendMailWithPdfAttachment } from '@/lib/mail/smtp';
 import { CarHistorialPdf, type CarHistoryPdfData } from '@/components/cars/CarHistorialPdf';
-import { sendTextMessage } from '@/lib/whatsapp/meta-client';
+import { notifyHistoryDecision } from '@/lib/whatsapp/meta-client';
 import { formatServiceSummary } from '@/lib/service-checklist';
 import {
     fetchParsedLegacyHistorialByVin,
@@ -264,8 +264,8 @@ export async function approveCarHistoryRequest(requestId: string): Promise<{
         return { success: false, message: mail.message };
     }
 
-    // Registrar / actualizar email del cliente
-    if (request.clientId) {
+    // Registrar el email solo si la ficha del cliente no tiene uno (no se pisa el existente)
+    if (request.clientId && !request.client?.email) {
         const emailTaken = await prisma.client.findFirst({
             where: {
                 email: request.email,
@@ -291,15 +291,17 @@ export async function approveCarHistoryRequest(requestId: string): Promise<{
         },
     });
 
-    try {
-        await sendTextMessage(
-            request.whatsappWaId,
-            `Tu historial del dominio *${request.car.licensePlate}* fue autorizado y enviado a *${request.email}*.\n` +
-                `Revisá tu casilla (y spam).\n\n` +
-                `_Escribí *ayuda* si necesitás otra cosa._`
-        );
-    } catch (err) {
+    const notified = await notifyHistoryDecision({
+        toWaId: request.whatsappWaId,
+        plate: request.car.licensePlate,
+        approved: true,
+        email: request.email,
+    }).catch((err) => {
         console.error('[history] WhatsApp notify failed', err);
+        return { ok: false as const, error: 'error inesperado' };
+    });
+    if (!notified.ok) {
+        console.error('[history] No se pudo avisar la aprobación por WhatsApp:', notified.error);
     }
 
     revalidatePath('/dashboard/historial-solicitudes');
@@ -311,7 +313,9 @@ export async function approveCarHistoryRequest(requestId: string): Promise<{
 
     return {
         success: true,
-        message: `Historial enviado a ${request.email}.`,
+        message:
+            `Historial enviado a ${request.email}.` +
+            (notified.ok ? '' : ' No se pudo avisar al cliente por WhatsApp.'),
     };
 }
 
@@ -348,18 +352,24 @@ export async function rejectCarHistoryRequest(
         },
     });
 
-    try {
-        await sendTextMessage(
-            request.whatsappWaId,
-            `Tu solicitud de historial del dominio *${request.car.licensePlate}* no pudo ser autorizada` +
-                (rejectReason ? ` (${rejectReason})` : '') +
-                `.\n\nSi necesitás ayuda, escribinos o pedí *turno*.\n\n_Escribí *ayuda*._`
-        );
-    } catch (err) {
+    const notified = await notifyHistoryDecision({
+        toWaId: request.whatsappWaId,
+        plate: request.car.licensePlate,
+        approved: false,
+        reason: rejectReason,
+    }).catch((err) => {
         console.error('[history] WhatsApp reject notify failed', err);
+        return { ok: false as const, error: 'error inesperado' };
+    });
+    if (!notified.ok) {
+        console.error('[history] No se pudo avisar el rechazo por WhatsApp:', notified.error);
     }
 
     revalidatePath('/dashboard/historial-solicitudes');
     revalidatePath('/dashboard');
-    return { success: true, message: 'Solicitud rechazada.' };
+    return {
+        success: true,
+        message:
+            'Solicitud rechazada.' + (notified.ok ? '' : ' No se pudo avisar al cliente por WhatsApp.'),
+    };
 }

@@ -199,6 +199,8 @@ const MONTHS_ES: Record<string, number> = {
     dic: 12,
 };
 
+const WEEKDAYS_ES = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+
 function stripAccents(text: string): string {
     return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -228,6 +230,16 @@ export function parseClientDate(text: string, now: Date = new Date()): Date | nu
     if (cleaned === 'hoy') return today;
     if (cleaned === 'manana') return new Date(today.getTime() + 86400000);
     if (cleaned === 'pasado manana') return new Date(today.getTime() + 2 * 86400000);
+
+    // "lunes", "el martes": próxima fecha con ese día de la semana (hoy si coincide)
+    const weekdayMatch = cleaned.match(
+        /^(?:el\s+)?(domingo|lunes|martes|miercoles|jueves|viernes|sabado)$/
+    );
+    if (weekdayMatch) {
+        const target = WEEKDAYS_ES.indexOf(weekdayMatch[1]);
+        const ahead = (target - today.getDay() + 7) % 7;
+        return new Date(today.getFullYear(), today.getMonth(), today.getDate() + ahead);
+    }
 
     let day: number | null = null;
     let month: number | null = null;
@@ -319,4 +331,32 @@ export function parseClientTime(text: string): TimeParseResult {
 /** Combina un día (a las 00:00) con hora y minutos. */
 export function combineDateAndTime(date: Date, hour: number, minute: number): Date {
     return new Date(date.getFullYear(), date.getMonth(), date.getDate(), hour, minute, 0, 0);
+}
+
+export type DateTimeParseResult = {
+    day: Date;
+    time: TimeParseResult;
+};
+
+/**
+ * Fecha y hora juntas en un mismo mensaje: `mañana a las 9`, `15/8 16:30`,
+ * `hoy 16`, `lunes 9 de la mañana` (solo fechas que entiende `parseClientDate`).
+ * Devuelve null si no se puede separar una fecha de una hora.
+ */
+export function parseClientDateTime(text: string, now: Date = new Date()): DateTimeParseResult | null {
+    const cleaned = text.trim().replace(/\s+/g, ' ').replace(/,/g, ' ');
+    const tokens = cleaned.split(' ').filter(Boolean);
+    if (tokens.length < 2) return null;
+
+    for (let i = 1; i < tokens.length; i++) {
+        const left = tokens.slice(0, i).join(' ');
+        let right = tokens.slice(i).join(' ');
+        // "mañana a las 9" → "9" (parseClientTime ya tolera "a las", pero no "a la")
+        right = right.replace(/^(?:a\s+las?|a\s+la)\s+/i, '');
+        const day = parseClientDate(left, now);
+        if (!day) continue;
+        const time = parseClientTime(right);
+        if (time.ok || time.reason === 'AMBIGUOUS') return { day, time };
+    }
+    return null;
 }

@@ -22,7 +22,9 @@ export type AppointmentListItem = {
     licensePlate: string | null;
     carId: string | null;
     carLinked: boolean;
-    status: 'PENDIENTE' | 'PROPUESTA_ENVIADA' | 'CONFIRMADO';
+    status: 'PENDIENTE' | 'PROPUESTA_ENVIADA' | 'CONFIRMADO' | 'CANCELADO';
+    canceledAt: Date | null;
+    canceledBy: string | null;
     source: 'MANUAL' | 'WHATSAPP';
     whatsappWaId: string | null;
     proposedSlots: string[] | null;
@@ -51,23 +53,6 @@ async function purgeStalePendingAppointments() {
         where: {
             status: { in: ['PENDIENTE', 'PROPUESTA_ENVIADA'] },
             createdAt: { lt: cutoff },
-        },
-    });
-
-    // Conversaciones a medias abandonadas (>30 min): solo drafts, sin turnos
-    const idleCutoff = new Date(Date.now() - 30 * 60 * 1000);
-    await prisma.whatsAppConversation.updateMany({
-        where: {
-            step: { not: 'IDLE' },
-            updatedAt: { lt: idleCutoff },
-        },
-        data: {
-            step: 'IDLE',
-            draftName: null,
-            draftIssue: null,
-            draftPlate: null,
-            draftCarId: null,
-            draftStartsAt: null,
         },
     });
 }
@@ -148,6 +133,8 @@ export async function listAppointmentsInRange(
             source: true,
             whatsappWaId: true,
             proposedSlots: true,
+            canceledAt: true,
+            canceledBy: true,
             createdAt: true,
             createdBy: { select: { name: true } },
             interventionId: true,
@@ -169,6 +156,8 @@ export async function listAppointmentsInRange(
         source: r.source,
         whatsappWaId: r.whatsappWaId,
         proposedSlots: asProposedSlots(r.proposedSlots),
+        canceledAt: r.canceledAt,
+        canceledBy: r.canceledBy,
         createdByName: r.createdBy.name,
         createdAt: r.createdAt,
         interventionId: r.interventionId,
@@ -256,6 +245,9 @@ export async function confirmAppointment(
         if (existing.status === 'CONFIRMADO') {
             return { success: false, message: 'La cita ya está confirmada.' };
         }
+        if (existing.status === 'CANCELADO') {
+            return { success: false, message: 'La cita fue cancelada: no se puede confirmar.' };
+        }
 
         const updated = await prisma.appointment.update({
             where: { id },
@@ -333,6 +325,9 @@ export async function proposeAppointmentAlternatives(
         }
         if (existing.status === 'CONFIRMADO') {
             return { success: false, message: 'La cita ya está confirmada.' };
+        }
+        if (existing.status === 'CANCELADO') {
+            return { success: false, message: 'La cita fue cancelada: no se pueden proponer horarios.' };
         }
 
         const proposedSlots = slots.map((d) => d.toISOString());

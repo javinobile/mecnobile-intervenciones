@@ -73,6 +73,8 @@ function statusLabel(status: AppointmentListItem['status']) {
             return 'Confirmada — se puede recibir';
         case 'PROPUESTA_ENVIADA':
             return 'Propuesta enviada — esperando cliente';
+        case 'CANCELADO':
+            return 'Cancelada — el horario quedó libre';
         default:
             return 'Pendiente — aún no asegurada';
     }
@@ -84,6 +86,8 @@ function statusClass(status: AppointmentListItem['status']) {
             return 'border-emerald-200 bg-emerald-50/60';
         case 'PROPUESTA_ENVIADA':
             return 'border-sky-200 bg-sky-50/60';
+        case 'CANCELADO':
+            return 'border-red-200 bg-red-50/60 opacity-80';
         default:
             return 'border-amber-200 bg-amber-50/60';
     }
@@ -95,6 +99,8 @@ function statusTextClass(status: AppointmentListItem['status']) {
             return 'text-emerald-700';
         case 'PROPUESTA_ENVIADA':
             return 'text-sky-800';
+        case 'CANCELADO':
+            return 'text-red-700';
         default:
             return 'text-amber-800';
     }
@@ -533,6 +539,21 @@ export default function TurnosCalendar() {
                                                     {statusLabel(ap.status)}
                                                 </span>
                                             </p>
+                                            {ap.status === 'CANCELADO' && (
+                                                <p className="text-xs text-red-700 mt-0.5">
+                                                    {ap.canceledBy === 'CLIENTE_WHATSAPP'
+                                                        ? 'Cancelada por el cliente por WhatsApp'
+                                                        : 'Cancelada por el taller'}
+                                                    {ap.canceledAt
+                                                        ? ` · ${new Date(ap.canceledAt).toLocaleString('es-AR', {
+                                                              day: 'numeric',
+                                                              month: 'numeric',
+                                                              hour: '2-digit',
+                                                              minute: '2-digit',
+                                                          })}`
+                                                        : ''}
+                                                </p>
+                                            )}
                                             {ap.clientPhone && (
                                                 <p className="text-xs text-gray-500 mt-0.5">{ap.clientPhone}</p>
                                             )}

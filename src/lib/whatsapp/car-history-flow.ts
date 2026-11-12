@@ -55,6 +55,7 @@ export async function findCarsForWhatsApp(
 
     const appointments = await prisma.appointment.findMany({
         where: {
+            status: { not: 'CANCELADO' },
             OR: [
                 { whatsappWaId: { in: variants } },
                 { clientPhone: { in: variants } },
@@ -113,6 +114,24 @@ export async function findCarsForWhatsApp(
     });
 
     return cars.sort((a, b) => a.licensePlate.localeCompare(b.licensePlate, 'es'));
+}
+
+export type WhatsAppClient = {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string | null;
+};
+
+/** Clientes cargados en el taller con este teléfono (el WhatsApp del chat es la identidad). */
+export async function findClientsByWaId(waId: string): Promise<WhatsAppClient[]> {
+    const rows = await prisma.client.findMany({
+        where: { phone: { not: null } },
+        select: { id: true, phone: true, firstName: true, lastName: true, email: true },
+    });
+    return rows
+        .filter((c) => phonesLikelyMatch(c.phone, waId))
+        .map(({ id, firstName, lastName, email }) => ({ id, firstName, lastName, email }));
 }
 
 /** Autos del WhatsApp con al menos una OT no cancelada (historial útil). */

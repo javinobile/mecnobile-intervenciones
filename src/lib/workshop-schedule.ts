@@ -140,3 +140,120 @@ export function checkSlotWithinSchedule(date: Date, schedule: WorkshopSchedule):
 
     return { ok: true };
 }
+
+// ---------------------------------------------------------------------------
+// Disponibilidad de turnos
+// ---------------------------------------------------------------------------
+
+/**
+ * Cada turno reserva un bloque desde `startsAt` (momento de recepción del auto).
+ * No modela la permanencia del auto en el taller, que puede ser de varios días.
+ * Promedio estimado: 120 minutos.
+ */
+export const APPOINTMENT_BLOCK_MINUTES = 120;
+
+const MINUTE_MS = 60 * 1000;
+
+export type BusyBlock = { start: number; end: number };
+
+/** Bloque ocupado por un turno: usa `endsAt` si está cargado, si no el bloque por defecto. */
+export function appointmentToBlock(ap: { startsAt: Date; endsAt?: Date | null }): BusyBlock {
+    const start = ap.startsAt.getTime();
+    const customEnd = ap.endsAt?.getTime();
+    const end =
+        customEnd !== undefined && customEnd > start
+            ? customEnd
+            : start + APPOINTMENT_BLOCK_MINUTES * MINUTE_MS;
+    return { start, end };
+}
+
+/** Un horario nuevo choca si su bloque se superpone con alguno ya ocupado. */
+export function slotConflicts(startsAt: Date, busy: BusyBlock[]): boolean {
+    const start = startsAt.getTime();
+    const end = start + APPOINTMENT_BLOCK_MINUTES * MINUTE_MS;
+    return busy.some((block) => start < block.end && end > block.start);
+}
+
+/** Horarios candidatos de un día: bloques consecutivos desde la apertura (ej. 08:00, 10:00, 12:00…). */
+export function candidateSlotsForDay(day: Date, schedule: WorkshopSchedule): Date[] {
+    const hours = hoursForDate(day, schedule);
+    if (!hours) return [];
+    const slots: Date[] = [];
+    for (
+        let minutes = hours.openMinutes;
+        minutes < hours.closeMinutes;
+        minutes += APPOINTMENT_BLOCK_MINUTES
+    ) {
+        slots.push(
+            new Date(day.getFullYear(), day.getMonth(), day.getDate(), Math.floor(minutes / 60), minutes % 60)
+        );
+    }
+    return slots;
+}
+
+/** Turnos activos (no cancelados) que ocupan horario entre dos fechas. */
+export async function getBusyBlocks(from: Date, to: Date): Promise<BusyBlock[]> {
+    // Se amplía el rango por el largo del bloque para captar turnos que arrancan antes y se superponen.
+    const lookback = new Date(from.getTime() - APPOINTMENT_BLOCK_MINUTES * MINUTE_MS);
+    const rows = await prisma.appointment.findMany({
+        where: {
+            status: { in: ['PENDIENTE', 'PROPUESTA_ENVIADA', 'CONFIRMADO'] },
+            startsAt: { gte: lookback, lte: to },
+        },
+        select: { startsAt: true, endsAt: true },
+    });
+    return rows.map(appointmentToBlock);
+}
+
+function endOfDay(day: Date): Date {
+    return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59, 999);
+}
+
+function startOfDayLocal(day: Date): Date {
+    return new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0, 0);
+}
+
+/** Horarios libres de un día (futuros, dentro del horario del taller y sin choques). */
+export async function listFreeSlotsForDay(
+    day: Date,
+    schedule: WorkshopSchedule,
+    now: Date = new Date()
+): Promise<Date[]> {
+    const candidates = candidateSlotsForDay(day, schedule).filter(
+        (slot) => slot.getTime() > now.getTime()
+    );
+    if (!candidates.length) return [];
+    const busy = await getBusyBlocks(startOfDayLocal(day), endOfDay(day));
+    return candidates.filter((slot) => !slotConflicts(slot, busy));
+}
+
+/** Próximos días hábiles con al menos un horario libre. */
+export async function listAvailableDays(
+    schedule: WorkshopSchedule,
+    now: Date = new Date(),
+    opts: { maxDays?: number; horizonDays?: number } = {}
+): Promise<Array<{ day: Date; slots: Date[] }>> {
+    const maxDays = opts.maxDays ?? 7;
+    const horizonDays = opts.horizonDays ?? 21;
+    const first = startOfDayLocal(now);
+    const last = endOfDay(new Date(first.getFullYear(), first.getMonth(), first.getDate() + horizonDays));
+    const busy = await getBusyBlocks(first, last);
+
+    const result: Array<{ day: Date; slots: Date[] }> = [];
+    for (let i = 0; i <= horizonDays && result.length < maxDays; i++) {
+        const day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i);
+        const slots = candidateSlotsForDay(day, schedule).filter(
+            (slot) => slot.getTime() > now.getTime() && !slotConflicts(slot, busy)
+        );
+        if (slots.length) result.push({ day, slots });
+    }
+    return result;
+}
+
+/** ¿El horario sigue libre? Se usa justo antes de crear el turno. */
+export async function isSlotFree(startsAt: Date): Promise<boolean> {
+    const from = new Date(startsAt.getTime() - APPOINTMENT_BLOCK_MINUTES * MINUTE_MS);
+    const to = new Date(startsAt.getTime() + APPOINTMENT_BLOCK_MINUTES * MINUTE_MS);
+    const busy = await getBusyBlocks(from, to);
+    return !slotConflicts(startsAt, busy);
+}
