@@ -45,14 +45,34 @@ function resolveNotifyWaId(clientPhone: string | null, whatsappWaId: string | nu
     return whatsappWaId || normalizeWaId(clientPhone);
 }
 
+/** Días que se conservan los turnos ya resueltos antes de limpiarlos. */
+const APPOINTMENT_RETENTION_DAYS = 7;
+
+/**
+ * Limpieza oportunista (corre al abrir el calendario, sin cron):
+ * - PENDIENTE / PROPUESTA_ENVIADA sin acción hace más de 7 días (desde que se crearon).
+ * - CONFIRMADO cuya fecha ya pasó hace más de 7 días.
+ * - CANCELADO hace más de 7 días (desde que se canceló).
+ * Borrar un turno no afecta a la OT que se haya abierto desde él.
+ */
 async function purgeStalePendingAppointments() {
     const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 7);
+    cutoff.setDate(cutoff.getDate() - APPOINTMENT_RETENTION_DAYS);
 
     await prisma.appointment.deleteMany({
         where: {
-            status: { in: ['PENDIENTE', 'PROPUESTA_ENVIADA'] },
-            createdAt: { lt: cutoff },
+            OR: [
+                { status: { in: ['PENDIENTE', 'PROPUESTA_ENVIADA'] }, createdAt: { lt: cutoff } },
+                { status: 'CONFIRMADO', startsAt: { lt: cutoff } },
+                {
+                    status: 'CANCELADO',
+                    OR: [
+                        { canceledAt: { lt: cutoff } },
+                        // cancelados sin fecha registrada: se usa la última modificación
+                        { canceledAt: null, updatedAt: { lt: cutoff } },
+                    ],
+                },
+            ],
         },
     });
 }

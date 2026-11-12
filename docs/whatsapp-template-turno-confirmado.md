@@ -217,7 +217,7 @@ Otras reglas:
 
 - **Teléfono**: se guarda siempre en `clientPhone` + `whatsappWaId` al crear el turno (sirve para identificar y cancelar).
 - **Timeout**: 30 minutos sin respuesta → se cierra el draft y se avisa al próximo mensaje; no se crea turno.
-- **Purge**: turnos `PENDIENTE` / `PROPUESTA_ENVIADA` sin acción hace más de 7 días se eliminan al listar el calendario (los `CANCELADO` no se purgan automáticamente).
+- **Purge** (al abrir el calendario, sin cron; 7 días de retención): se eliminan los `PENDIENTE` / `PROPUESTA_ENVIADA` creados hace más de 7 días, los `CONFIRMADO` cuya fecha pasó hace más de 7 días y los `CANCELADO` cancelados hace más de 7 días. Borrar un turno no afecta a la OT abierta desde él.
 - **Agenda**: el calendario se refresca solo cada 25 segundos (se pausa si la pestaña está oculta o el mecánico está editando).
 
 ### Abrir OT desde un turno
