@@ -91,27 +91,83 @@ recurso, texto numerado. En todos los casos el webhook confirma con el payload o
 ```env
 WHATSAPP_TEMPLATE_TURNO_CONFIRMADO=turno_confirmado
 WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS=turno_alternativas
+WHATSAPP_TEMPLATE_HISTORIAL_APROBADO=historial_aprobado
+WHATSAPP_TEMPLATE_HISTORIAL_RECHAZADO=historial_rechazado
 WHATSAPP_TEMPLATE_LANGUAGE=es_AR
+WORKSHOP_CONTACT_PHONE=3482220236
 ```
 
 5. Recrear el contenedor para cargar el entorno actualizado.
 
+## Plantillas de respaldo de historial
+
+Los avisos de historial autorizado/rechazado salen primero como texto libre (ventana de 24 h). Si Meta lo rechaza
+(ventana cerrada), el sistema usa estas plantillas **Utility** en español (`es_AR`), que hay que crear y aprobar en Meta:
+
+| Plantilla (default) | Variables | Texto sugerido |
+|---------------------|-----------|----------------|
+| `historial_aprobado` | `{{1}}` dominio · `{{2}}` email | `Tu historial del dominio {{1}} fue autorizado y enviado a {{2}}. Revisá tu casilla (y spam).` |
+| `historial_rechazado` | `{{1}}` dominio · `{{2}}` motivo | `Tu solicitud de historial del dominio {{1}} no pudo ser autorizada ({{2}}). Si necesitás ayuda, escribinos.` |
+
+Si el aviso falla, el panel del ADMIN lo informa en el mensaje de resultado de la solicitud.
+
 ## Conversación del bot (FSM)
 
-Patrón usado: **drafts descartables** + turno recién al final.
+Patrón usado: **drafts descartables** + turno recién al confirmar. Un solo mensaje del bot por paso, sin menús ni pies
+de ayuda repetidos; las elecciones cerradas van con **botones** (hasta 3 opciones) o **listas** (más de 3). Siempre se puede
+responder escribiendo (el número de la opción, el dominio, "mañana 9"…). Si Meta rechaza el mensaje interactivo, el bot cae a texto numerado.
 
-Pasos: `AWAIT_ISSUE` → `AWAIT_PLATE` → (`AWAIT_NAME`) → `AWAIT_DATE` → `AWAIT_TIME` → turno `PENDIENTE`.
+Pasos del turno: `AWAIT_CAR_CHOICE` | `AWAIT_PLATE` → (`AWAIT_PLATE_CONFIRM`) → (`AWAIT_DUP`) → (`AWAIT_NAME`) → `AWAIT_ISSUE`
+→ `AWAIT_SLOT_DAY` → `AWAIT_SLOT_TIME` → `AWAIT_CONFIRM` → turno `PENDIENTE`.
+Otros pasos: `AWAIT_STATUS_PLATE`, `AWAIT_HISTORY_PLATE`, `AWAIT_HISTORY_EMAIL_CHOICE`, `AWAIT_HISTORY_EMAIL`,
+`AWAIT_CANCEL_CHOICE`, `AWAIT_CANCEL_CONFIRM`.
 
-| Comando | Efecto |
-|---------|--------|
-| `turno` / `hola` | Empieza (o reinicia) el pedido |
-| `estado` | Estado de la OT abierta del auto (identifica por este WhatsApp) |
-| `historial` | Solicita historial PDF del auto (email → admin autoriza) |
-| `estado AA123BB` | Igual, forzando dominio si tenés más de un auto |
-| `reiniciar` | Borra solo el pedido a medias; **no** toca turnos ya creados |
-| `cambiar fecha` | En el paso de la hora, vuelve a preguntar el día |
-| `cancelar` | Cancela el turno activo de ese WhatsApp (si hay varios: `cancelar 1`) |
-| `ayuda` | Lista comandos |
+**Menú**: saludo (`hola`, `buenas`…, ya no inicia un turno) → botones *Sacar turno* · *Estado de mi auto* · *Más opciones*
+(*Pedir historial* · *Cancelar un turno* · *Hablar con el taller*).
+
+Las palabras clave se normalizan (sin acentos, mayúsculas ni signos: `Estado?`, `*estado*`, `Cancelar.`) y también se
+entienden frases como "quiero un turno", "cómo va mi auto" o "pasame el historial".
+
+| Palabra / frase | Efecto |
+|-----------------|--------|
+| `turno`, "quiero un turno" | Empieza el pedido de turno |
+| `estado`, `estado AA123BB`, "cómo va mi auto" | Estado de la OT abierta del auto (identifica por este WhatsApp) |
+| `historial`, `historial AA123BB` | Solicita historial PDF del auto (email → admin autoriza) |
+| `cancelar`, `cancelar 2` | Cancela un turno (pide confirmación; el turno pasa a `CANCELADO`, **no se borra**) |
+| `taller`, "hablar con el taller" | Muestra el teléfono del taller (`WORKSHOP_CONTACT_PHONE`, default `3482220236`) |
+| `menu` / `reiniciar` | Descarta el pedido a medias (no toca turnos ya creados) y muestra el menú |
+| `ayuda` | Muestra el menú (o repite la pregunta del paso en curso) |
+
+En pasos de **texto libre** (avería, nombre, dominio, email) las palabras clave no interrumpen: una avería que diga
+"historial de frenos" se guarda como avería. Solo `menu`/`reiniciar` (y `cancelar`, que abandona el pedido) salen de ahí.
+
+### Turno
+
+1. **Auto**: si el teléfono es de un cliente, ofrece sus autos (`¿El turno es para tu Fiat Palio (ABC123)?`); si no, pide el dominio. Si el dominio es parecido a uno cargado, lo consulta, pero **el bot nunca modifica el dominio del auto**: guarda lo que escribió el cliente y una nota en el turno (`[Dominio a validar]`) para que el taller lo corrija.
+2. **Turno duplicado**: si ya hay un turno activo del mismo teléfono y dominio, ofrece mantenerlo o cancelarlo.
+3. **Nombre** (solo si no se conoce) y **avería**.
+4. **Día y horario**: lista de los próximos días con horarios libres, luego los horarios del día. También acepta texto libre, incluso fecha y hora juntas (`mañana a las 9`, `15/8 16:30`, `lunes 9 de la mañana`).
+5. **Resumen** con *Confirmar* / *Cambiar horario*. Recién al confirmar se crea el turno `PENDIENTE` (`source: WHATSAPP`).
+
+### Disponibilidad
+
+Cada turno reserva un bloque de **120 minutos** desde su hora de llegada (`APPOINTMENT_BLOCK_MINUTES` en
+`src/lib/workshop-schedule.ts`; usa `endsAt` si el turno manual lo tiene cargado). No modela los días que el auto se
+queda en el taller: solo la recepción. Un horario que se superpone con un turno `PENDIENTE`, `PROPUESTA_ENVIADA` o
+`CONFIRMADO` no se ofrece; uno `CANCELADO` libera el horario. Si el cliente escribe una hora ocupada, el bot le ofrece
+los horarios libres más cercanos. Se revalida al confirmar por si otro cliente tomó el horario.
+
+### Cancelación
+
+El bot pide confirmación y deja el turno en `CANCELADO` (`canceledAt`, `canceledBy = CLIENTE_WHATSAPP`). El calendario
+del panel lo muestra en rojo ("Cancelada por el cliente por WhatsApp") hasta que el taller lo elimine. No se pueden cancelar
+por el bot turnos que ya tienen una OT abierta.
+
+### Timeout y mensajes no soportados
+
+- 30 minutos sin respuesta → al próximo mensaje el bot avisa "el pedido se cerró por inactividad" y ofrece empezar de nuevo.
+- Audios, imágenes, ubicaciones, etc.: responde que solo lee texto y muestra el menú.
+- Con horarios propuestos por el taller pendientes, el bot ya no bloquea el resto: si el cliente escribe otra cosa se la procesa normalmente.
 
 ### Consulta de estado (`estado`)
 
@@ -126,17 +182,17 @@ Pasos: `AWAIT_ISSUE` → `AWAIT_PLATE` → (`AWAIT_NAME`) → `AWAIT_DATE` → `
 ### Historial del vehículo (`historial`)
 
 1. Cliente escribe *historial* (mismo WhatsApp del cliente).
-2. Si hay varios autos con OT → pide dominio.
-3. Pide un *email* de destino.
+2. Si hay varios autos con historial → lista para elegir.
+3. Si el cliente ya tiene email, ofrece *Usar ese email* / *Otro email*; si no, lo pide.
 4. Se crea una solicitud **PENDIENTE** (solo un ADMIN puede autorizar en Dashboard → Solicitudes historial).
-5. Al autorizar: se genera el PDF (sin precios), se envía por SMTP, se guarda el email en la ficha del cliente y se avisa por WhatsApp.
+5. Al autorizar: se genera el PDF (sin precios), se envía por SMTP, se guarda el email en la ficha del cliente **solo si todavía no tenía uno** (el bot nunca pisa el email existente) y se avisa por WhatsApp (con plantilla de respaldo fuera de la ventana de 24 h).
 6. El ADMIN también puede imprimir el historial desde la ficha del vehículo (sin WhatsApp).
 
-Fecha y hora se piden **por separado** y en lenguaje natural:
+Fecha y hora se pueden escribir en lenguaje natural:
 
 | El cliente escribe | Se interpreta |
 |--------------------|---------------|
-| `9/8`, `9 de agosto`, `25 dic`, `hoy`, `mañana` | día |
+| `9/8`, `9 de agosto`, `25 dic`, `hoy`, `mañana`, `lunes` | día |
 | `16`, `16:30`, `16 hs`, `4 de la tarde`, `mediodía`, `16 y media` | hora |
 
 Validaciones del día y la hora:
@@ -160,8 +216,8 @@ atención, y también se valida al crear un turno manual y al proponer alternati
 Otras reglas:
 
 - **Teléfono**: se guarda siempre en `clientPhone` + `whatsappWaId` al crear el turno (sirve para identificar y cancelar).
-- **Timeout**: 30 minutos sin respuesta → se cierra el draft y se avisa; no se crea turno.
-- **Purge**: turnos `PENDIENTE` / `PROPUESTA_ENVIADA` sin acción hace más de 7 días se eliminan al listar el calendario.
+- **Timeout**: 30 minutos sin respuesta → se cierra el draft y se avisa al próximo mensaje; no se crea turno.
+- **Purge**: turnos `PENDIENTE` / `PROPUESTA_ENVIADA` sin acción hace más de 7 días se eliminan al listar el calendario (los `CANCELADO` no se purgan automáticamente).
 - **Agenda**: el calendario se refresca solo cada 25 segundos (se pausa si la pestaña está oculta o el mecánico está editando).
 
 ### Abrir OT desde un turno

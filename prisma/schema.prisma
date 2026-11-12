@@ -246,6 +246,8 @@ enum AppointmentStatus {
   PENDIENTE
   PROPUESTA_ENVIADA
   CONFIRMADO
+  /// Cancelado por el cliente (WhatsApp) o por el staff. No ocupa horario.
+  CANCELADO
 }
 
 enum AppointmentSource {
@@ -270,6 +272,9 @@ model Appointment {
   whatsappWaId String?
   /// ISO datetime strings offered by staff when status is PROPUESTA_ENVIADA
   proposedSlots Json?
+  /// Cuándo y quién canceló ("CLIENTE_WHATSAPP" o id de usuario del staff)
+  canceledAt   DateTime?
+  canceledBy   String?
   /// OT abierta a partir de este turno (solo turnos CONFIRMADO)
   interventionId String?       @unique
   intervention   Intervention? @relation(fields: [interventionId], references: [id], onDelete: SetNull)
@@ -297,6 +302,12 @@ model WhatsAppConversation {
   draftPlate    String?
   draftCarId    String?
   draftStartsAt DateTime?
+  /// Nota interna para el staff si el dominio informado es dudoso
+  draftPlateNote String?
+  /// Dato auxiliar del paso actual (id de turno a cancelar, email propuesto, etc.)
+  draftExtra    String?
+  /// "No entendí" seguidos en el paso actual
+  unknownCount  Int       @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 }

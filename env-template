@@ -26,7 +26,11 @@ WHATSAPP_API_VERSION=v21.0
 WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_TEMPLATE_TURNO_CONFIRMADO=turno_confirmado
 WHATSAPP_TEMPLATE_TURNO_ALTERNATIVAS=turno_alternativas
+WHATSAPP_TEMPLATE_HISTORIAL_APROBADO=historial_aprobado
+WHATSAPP_TEMPLATE_HISTORIAL_RECHAZADO=historial_rechazado
 WHATSAPP_TEMPLATE_LANGUAGE=es_AR
+# Teléfono que el bot muestra en "Hablar con el taller" (default 3482220236)
+WORKSHOP_CONTACT_PHONE=3482220236
 
 # --- Groq (consulta *estado* por WhatsApp; opcional) ---
 GROQ_API_KEY=

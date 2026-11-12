@@ -5,7 +5,7 @@ import { formatDateTimeEsAr, formatMetaRecipientWaId, formatSlotButtonLabel } fr
 /** Prefijo de los IDs de botón con las alternativas de turno (`turno_slot_0`…). */
 export const SLOT_BUTTON_PREFIX = 'turno_slot_';
 
-type SendResult = { ok: true } | { ok: false; error: string };
+export type SendResult = { ok: true } | { ok: false; error: string };
 
 async function graphPost(path: string, body: Record<string, unknown>): Promise<SendResult> {
     if (!isWhatsAppConfigured()) {
@@ -75,6 +75,72 @@ export async function sendInteractiveButtons(
             },
         },
     });
+}
+
+/** Lista interactiva (hasta 10 filas). Título de fila ≤ 24 caracteres, descripción ≤ 72. */
+export async function sendInteractiveList(
+    toWaId: string,
+    bodyText: string,
+    rows: Array<{ id: string; title: string; description?: string }>,
+    opts: { buttonLabel?: string; sectionTitle?: string } = {}
+): Promise<SendResult> {
+    const { phoneNumberId } = getWhatsAppConfig();
+    return graphPost(`${phoneNumberId}/messages`, {
+        messaging_product: 'whatsapp',
+        to: formatMetaRecipientWaId(toWaId),
+        type: 'interactive',
+        interactive: {
+            type: 'list',
+            body: { text: bodyText.slice(0, 1024) },
+            action: {
+                button: (opts.buttonLabel || 'Ver opciones').slice(0, 20),
+                sections: [
+                    {
+                        title: (opts.sectionTitle || 'Opciones').slice(0, 24),
+                        rows: rows.slice(0, 10).map((row) => ({
+                            id: row.id,
+                            title: row.title.slice(0, 24),
+                            ...(row.description
+                                ? { description: row.description.slice(0, 72) }
+                                : {}),
+                        })),
+                    },
+                ],
+            },
+        },
+    });
+}
+
+export type ChoiceOption = { id: string; title: string; description?: string };
+
+/**
+ * Ofrece una elección cerrada: botones si son hasta 3 con título corto, lista si son más.
+ * Si Meta rechaza el mensaje interactivo, cae a texto numerado (o `fallbackText`)
+ * para que el cliente igual pueda responder escribiendo.
+ */
+export async function sendChoice(
+    toWaId: string,
+    bodyText: string,
+    options: ChoiceOption[],
+    opts: { listButtonLabel?: string; fallbackText?: string } = {}
+): Promise<SendResult> {
+    const useButtons = options.length <= 3 && options.every((o) => o.title.length <= 20);
+    const result = useButtons
+        ? await sendInteractiveButtons(
+              toWaId,
+              bodyText,
+              options.map((o) => ({ id: o.id, title: o.title }))
+          )
+        : await sendInteractiveList(toWaId, bodyText, options, {
+              buttonLabel: opts.listButtonLabel,
+          });
+    if (result.ok) return result;
+
+    const lines = options.map((o, i) => `${i + 1}) ${o.title}${o.description ? ` — ${o.description}` : ''}`);
+    return sendTextMessage(
+        toWaId,
+        opts.fallbackText ?? `${bodyText}\n\n${lines.join('\n')}\n\nRespondé con el número de la opción.`
+    );
 }
 
 /**
@@ -166,6 +232,42 @@ export async function notifyAppointmentConfirmed(opts: {
         fecha,
         hora,
     ]);
+}
+
+/**
+ * Aviso de historial autorizado/rechazado. Texto libre dentro de la ventana de 24 h;
+ * si Meta lo rechaza, plantilla Utility de respaldo
+ * (`historial_aprobado`: {{1}} dominio · {{2}} email; `historial_rechazado`: {{1}} dominio · {{2}} motivo).
+ */
+export async function notifyHistoryDecision(opts: {
+    toWaId: string;
+    plate: string;
+    approved: boolean;
+    email?: string;
+    reason?: string | null;
+}): Promise<SendResult> {
+    const { templateHistorialAprobado, templateHistorialRechazado, templateLanguage } =
+        getWhatsAppConfig();
+
+    const text = opts.approved
+        ? `Tu historial del dominio *${opts.plate}* fue autorizado y enviado a *${opts.email}*.\n` +
+          `Revisá tu casilla (y spam).`
+        : `Tu solicitud de historial del dominio *${opts.plate}* no pudo ser autorizada` +
+          (opts.reason ? ` (${opts.reason})` : '') +
+          `.\nSi necesitás ayuda, escribinos.`;
+
+    const textResult = await sendTextMessage(opts.toWaId, text);
+    if (textResult.ok) return textResult;
+
+    return opts.approved
+        ? sendTemplateMessage(opts.toWaId, templateHistorialAprobado, templateLanguage, [
+              opts.plate,
+              opts.email || '',
+          ])
+        : sendTemplateMessage(opts.toWaId, templateHistorialRechazado, templateLanguage, [
+              opts.plate,
+              opts.reason || 'sin motivo especificado',
+          ]);
 }
 
 /**

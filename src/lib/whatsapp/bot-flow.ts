@@ -1,40 +1,43 @@
+import { revalidatePath } from 'next/cache';
 import prisma from '../../../lib/prisma';
 import { Prisma } from '../../../generated/prisma';
-import {
-    findFuzzyPlateMatches,
-    formatFuzzyPlateMatchLine,
-    updateCarLicensePlateCorrected,
-    type FuzzyPlateMatch,
-} from '../../../lib/plate-fuzzy-match';
+import { findFuzzyPlateMatches, type FuzzyPlateMatch } from '../../../lib/plate-fuzzy-match';
 import { findCarIdByNormalizedPlateExact } from '../../../lib/plate-search';
 import { normalizeLicensePlate, validateNewLicensePlate } from '../../../lib/utils';
 import {
     checkSlotWithinSchedule,
-    describeDayHours,
     describeSchedule,
     getWorkshopSchedule,
+    isSlotFree,
     isWorkingDay,
+    listAvailableDays,
+    listFreeSlotsForDay,
     pluralWeekday,
 } from '../workshop-schedule';
-import { WHATSAPP_BOT_EMAIL } from './config';
-import { notifyAppointmentConfirmed, sendTextMessage, SLOT_BUTTON_PREFIX } from './meta-client';
+import { WHATSAPP_BOT_EMAIL, getWorkshopContactPhone } from './config';
 import {
-    buildOtStatusReply,
-    findCarsWithOpenOtForWhatsApp,
-    formatCarChoiceList,
-    type StatusCar,
-} from './ot-status';
+    notifyAppointmentConfirmed,
+    sendChoice,
+    sendTextMessage,
+    SLOT_BUTTON_PREFIX,
+    type ChoiceOption,
+} from './meta-client';
+import { buildOtStatusReply, findCarsWithOpenOtForWhatsApp, type StatusCar } from './ot-status';
 import {
     createPendingHistoryRequest,
+    findCarsForWhatsApp,
     findCarsWithHistoryForWhatsApp,
+    findClientsByWaId,
     isValidEmail,
 } from './car-history-flow';
 import {
     combineDateAndTime,
     formatDateTimeEsAr,
     formatMetaRecipientWaId,
+    formatSlotButtonLabel,
     normalizeWaId,
     parseClientDate,
+    parseClientDateTime,
     parseClientTime,
     startOfDay,
 } from './phone';
@@ -42,142 +45,77 @@ import {
 type IncomingMessage = {
     from: string;
     text: string;
+    /** Id del botón o fila de lista tocada (o payload de plantilla). */
     buttonId?: string;
+    /** Audio, imagen, ubicación, etc. */
+    unsupported?: boolean;
 };
+
+type Conversation = NonNullable<Awaited<ReturnType<typeof getOrCreateConversation>>>;
 
 /** Timeout de inactividad del FSM (drafts). No crea ni deja turnos colgados. */
 const CONVERSATION_IDLE_MS = 30 * 60 * 1000;
 
-const DATE_HINT =
-    'Podés escribirlo como *9/8*, *9 de agosto*, o simplemente *hoy* o *mañana*.';
+// ---------------------------------------------------------------------------
+// Palabras clave (todas se comparan normalizadas: sin acentos, signos ni mayúsculas)
+// ---------------------------------------------------------------------------
 
-const TIME_HINT = 'Escribila como *16* (4 de la tarde), *16:30* o *9 de la mañana*.';
+/** Normaliza texto de WA para keywords (quita *negrita*, signos, acentos). */
+function normalizeBotKeyword(text: string): string {
+    return text
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[*_~`•·]+/g, ' ')
+        .replace(/[¿?¡!.,;:"'“”‘’]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
 
-const CHANGE_DATE_WORDS = new Set([
+function words(list: string[]): Set<string> {
+    return new Set(list.map(normalizeBotKeyword));
+}
+
+const RESTART_WORDS = words(['reiniciar', 'reset', 'empezar', 'empezar de nuevo', 'comienzo', 'menu', 'inicio']);
+const HELP_WORDS = words(['ayuda', 'help', 'opciones']);
+const GREETING_WORDS = words([
+    'hola',
+    'buenas',
+    'buen dia',
+    'buenos dias',
+    'buenas tardes',
+    'buenas noches',
+    'hola buenas',
+    'hola buen dia',
+    'que tal',
+    'hello',
+    'hi',
+]);
+const CANCEL_WORDS = words(['cancelar', 'cancelar turno', 'anular', 'anular turno', 'cancelar el turno']);
+const YES_WORDS = words(['si', 'yes', 'ok', 'dale', 'correcto', 'ese', 'es', 'confirmo', 'confirmar', 'listo']);
+const NO_WORDS = words(['no', 'nop', 'ninguno', 'ninguna', 'otro', 'otra', 'otro auto', 'none']);
+const CHANGE_WORDS = words([
+    'cambiar',
     'cambiar fecha',
     'cambiar dia',
-    'cambiar día',
+    'cambiar horario',
     'otro dia',
-    'otro día',
+    'otro horario',
     'cambiar el dia',
-    'cambiar el día',
 ]);
-
-/** Menú global de palabras clave (siempre disponible). */
-const HELP_HINT =
-    `*Palabras clave*\n` +
-    `• *turno* — pedir un turno\n` +
-    `• *estado* — cómo va tu auto en el taller\n` +
-    `• *historial* — pedir el historial del auto por email\n` +
-    `• *cancelar* — cancelar un turno pendiente o confirmado\n` +
-    `• *reiniciar* — empezar de cero (borra el pedido a medias)\n` +
-    `• *ayuda* — ver este menú`;
-
-/** Pie de mensaje con lo que se puede escribir en el paso actual. */
-function stepHint(step: string): string {
-    switch (step) {
-        case 'AWAIT_ISSUE':
-            return (
-                `_Ahora: contame la avería o el trabajo.\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_PLATE':
-            return (
-                `_Ahora: el *dominio* sin guiones (*ABC123* o *AA123BB*).\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_PLATE_CONFIRM':
-            return (
-                `_Ahora: confirmá si el dominio encontrado es el tuyo (*sí* / *no* o el número de la lista).\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_NAME':
-            return (
-                `_Ahora: tu *nombre y apellido*.\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_DATE':
-            return (
-                `_Ahora: el *día* (*hoy*, *mañana*, *15/8*…).\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_TIME':
-            return (
-                `_Ahora: la *hora* (*16*, *16:30*, *4 de la tarde*…).\n` +
-                `También: *cambiar fecha* · *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_STATUS_PLATE':
-            return (
-                `_Ahora: el *dominio* o el número de la lista (1, 2…).\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_HISTORY_PLATE':
-            return (
-                `_Ahora: el *dominio* del auto para el historial (o el número de la lista).\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        case 'AWAIT_HISTORY_EMAIL':
-            return (
-                `_Ahora: el *email* donde querés recibir el PDF.\n` +
-                `También: *reiniciar* · *ayuda*_`
-            );
-        default:
-            return `_Escribí *turno*, *estado*, *historial*, *cancelar* o *ayuda*_`;
-    }
-}
-
-function withStepHint(body: string, step: string): string {
-    return `${body.trim()}\n\n${stepHint(step)}`;
-}
-
-function helpForStep(step: string): string {
-    if (!step || step === 'IDLE') return HELP_HINT;
-    return (
-        `Estás en medio de una consulta.\n\n` +
-        `${stepHint(step)}\n\n` +
-        `${HELP_HINT}`
-    );
-}
-
-const RESTART_WORDS = new Set([
-    'reiniciar',
-    'reset',
-    'empezar',
-    'empezar de nuevo',
-    'comienzo',
-    'menu',
-    'menú',
-]);
-
-const START_WORDS = new Set(['turno', 'hola', 'buenas', 'buen dia', 'buen día', 'hello', 'hi']);
-
-const CANCEL_WORDS = new Set(['cancelar', 'cancelar turno', 'anular', 'anular turno']);
-
-const HELP_WORDS = new Set(['ayuda', 'help', 'opciones', '?']);
-
-const YES_WORDS = new Set(['si', 'sí', 'yes', 'ok', 'dale', 'correcto', 'ese', 'es', 'confirmo', 'confirmar']);
-
-const NO_WORDS = new Set(['no', 'nop', 'ninguno', 'ninguna', 'otro', 'otra', 'none']);
-
-/** Consulta de estado de OT (identifica por este WhatsApp). */
-const STATUS_WORDS = new Set([
+const STATUS_WORDS = words([
     'estado',
     'estado del auto',
     'estado auto',
     'como va',
-    'cómo va',
     'como esta',
-    'cómo está',
     'como esta mi auto',
-    'cómo está mi auto',
     'como va mi auto',
-    'cómo va mi auto',
     'mi auto',
     'consulta',
     'consultar',
 ]);
-
-const HISTORY_WORDS = new Set([
+const HISTORY_WORDS = words([
     'historial',
     'historial del auto',
     'historial auto',
@@ -186,18 +124,26 @@ const HISTORY_WORDS = new Set([
     'historia del auto',
     'historia',
 ]);
+const CONTACT_WORDS = words([
+    'taller',
+    'contacto',
+    'telefono',
+    'llamar',
+    'hablar con el taller',
+    'hablar con una persona',
+    'hablar con alguien',
+    'quiero hablar con el taller',
+]);
 
-/** Normaliza texto de WA para keywords (quita *negrita*, signos, acentos). */
-function normalizeBotKeyword(text: string): string {
-    return text
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/[*_~`•·]+/g, ' ')
-        .replace(/[¿?¡!.,;:"'“”‘’]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-}
+type Intent = 'menu' | 'help' | 'greeting' | 'turno' | 'status' | 'history' | 'cancel' | 'contact';
+
+type DetectedIntent = {
+    intent: Intent | null;
+    /** `estado ABC123` / `historial ABC123` */
+    plate?: string;
+    /** `cancelar 2` */
+    cancelIndex?: number;
+};
 
 /**
  * Detecta pedido de historial: "historial", "*Historial*", "quiero el historial", etc.
@@ -214,7 +160,6 @@ function parseHistoryIntent(text: string): { hit: boolean; plate?: string } {
 
     if (HISTORY_WORDS.has(lower)) return { hit: true };
 
-    // Frases naturales / menú copiado
     if (
         /(?:^|\s)(?:el\s+)?historial(?:\s|$)/.test(lower) ||
         /^(?:quiero|pedime|pedir|solicitar|necesito|mandame|manda|envia|enviame)\s+(?:el\s+)?historial/.test(
@@ -227,32 +172,94 @@ function parseHistoryIntent(text: string): { hit: boolean; plate?: string } {
     return { hit: false };
 }
 
-/**
- * Detecta inicio de pedido de turno: "turno", saludos, o frases como
- * "Hola, quiero pedir un turno" (texto del botón de WhatsApp en la web).
- */
+/** Pedido de turno: "turno", "quiero un turno", "hola, necesito sacar turno". */
 function parseTurnoIntent(text: string): boolean {
     const lower = normalizeBotKeyword(text);
     if (!lower) return false;
-
-    if (START_WORDS.has(lower)) return true;
-
+    if (lower === 'turno' || lower === 'un turno') return true;
     if (/\b(?:cancelar|anular)\b/.test(lower)) return false;
-
     if (!/\bturno\b/.test(lower)) return false;
+    return /(?:quiero|quisiera|necesito|pedir|pido|solicitar|reservar|agendar|sacar|hacer|dame|darme)\b/.test(
+        lower
+    );
+}
 
-    if (/^(?:hola|buenas|buen dia|hello|hi)\b/.test(lower)) return true;
+/** Intención del mensaje según palabras clave y frases naturales (exportada para poder probarla). */
+export function detectIntent(text: string): DetectedIntent {
+    if (text.trim() === '?') return { intent: 'help' };
+    const lower = normalizeBotKeyword(text);
+    if (!lower) return { intent: null };
 
+    if (RESTART_WORDS.has(lower)) return { intent: 'menu' };
+    if (HELP_WORDS.has(lower)) return { intent: 'help' };
+    if (GREETING_WORDS.has(lower)) return { intent: 'greeting' };
+
+    const cancelPick = lower.match(/^(?:cancelar|anular)\s+(\d+)$/);
+    if (cancelPick) return { intent: 'cancel', cancelIndex: parseInt(cancelPick[1], 10) };
     if (
-        /(?:quiero|quisiera|necesito|pedir|solicitar|reservar|agendar|sacar|hacer)\b/.test(
-            lower
-        )
+        CANCEL_WORDS.has(lower) ||
+        (/\b(?:cancelar|anular|cancelo)\b/.test(lower) && /\bturno\b/.test(lower)) ||
+        /^(?:quiero|necesito|quisiera)\s+(?:cancelar|anular)\b/.test(lower)
     ) {
-        return true;
+        return { intent: 'cancel' };
     }
 
-    return false;
+    const history = parseHistoryIntent(text);
+    if (history.hit) return { intent: 'history', plate: history.plate };
+
+    const statusPlate = lower.match(/^(?:estado|consultar?)\s+([a-z0-9-]{6,10})$/);
+    if (statusPlate) return { intent: 'status', plate: statusPlate[1] };
+    if (
+        STATUS_WORDS.has(lower) ||
+        (/\b(?:como|que)\s+(?:va|esta|anda|paso)\b/.test(lower) &&
+            /\b(?:auto|vehiculo|camioneta|coche|moto)\b/.test(lower)) ||
+        (/\bestado\b/.test(lower) &&
+            /\b(?:auto|vehiculo|ot|orden|reparacion|arreglo|camioneta)\b/.test(lower)) ||
+        (/\b(?:esta|estara)\s+listo\b/.test(lower) && /\b(?:auto|vehiculo|camioneta)\b/.test(lower))
+    ) {
+        return { intent: 'status' };
+    }
+
+    if (
+        CONTACT_WORDS.has(lower) ||
+        /\b(?:hablar|comunicar|comunicarme|contactar|contactarme)\b.*\b(?:taller|persona|alguien|humano|mecanico)\b/.test(
+            lower
+        ) ||
+        /\b(?:telefono|numero)\s+del\s+taller\b/.test(lower)
+    ) {
+        return { intent: 'contact' };
+    }
+
+    if (parseTurnoIntent(text)) return { intent: 'turno' };
+
+    return { intent: null };
 }
+
+// ---------------------------------------------------------------------------
+// Pasos del FSM
+// ---------------------------------------------------------------------------
+
+/** Pasos donde el cliente escribe texto libre: las palabras clave no los interrumpen. */
+const FREE_TEXT_STEPS = new Set(['AWAIT_ISSUE', 'AWAIT_NAME', 'AWAIT_PLATE', 'AWAIT_HISTORY_EMAIL']);
+
+/** Prefijo de id de botón que acepta cada paso (para descartar botones viejos). */
+const STEP_BUTTON_KIND: Record<string, string> = {
+    AWAIT_CAR_CHOICE: 'car',
+    AWAIT_PLATE_CONFIRM: 'fuzzy',
+    AWAIT_DUP: 'dup',
+    AWAIT_SLOT_DAY: 'day',
+    AWAIT_SLOT_TIME: 'time|day',
+    AWAIT_CONFIRM: 'confirm',
+    AWAIT_STATUS_PLATE: 'scar',
+    AWAIT_HISTORY_PLATE: 'hcar',
+    AWAIT_HISTORY_EMAIL_CHOICE: 'email',
+    AWAIT_CANCEL_CHOICE: 'cancel',
+    AWAIT_CANCEL_CONFIRM: 'cancelok',
+};
+
+// ---------------------------------------------------------------------------
+// Utilidades de datos
+// ---------------------------------------------------------------------------
 
 async function getOrCreateBotUserId(): Promise<string> {
     const existing = await prisma.user.findUnique({
@@ -287,59 +294,31 @@ async function getOrCreateConversation(waId: string) {
     });
 }
 
+const EMPTY_DRAFT = {
+    draftName: null,
+    draftIssue: null,
+    draftPlate: null,
+    draftCarId: null,
+    draftStartsAt: null,
+    draftPlateNote: null,
+    draftExtra: null,
+} as const;
+
 async function clearDrafts(waId: string) {
-    await prisma.whatsAppConversation.update({
+    await prisma.whatsAppConversation.upsert({
         where: { waId },
-        data: {
-            step: 'IDLE',
-            draftName: null,
-            draftIssue: null,
-            draftPlate: null,
-            draftCarId: null,
-            draftStartsAt: null,
-        },
+        create: { waId, step: 'IDLE' },
+        update: { step: 'IDLE', unknownCount: 0, ...EMPTY_DRAFT },
     });
 }
 
-/**
- * Cierra conversaciones incompletas por inactividad.
- * Solo limpia drafts: nunca borra Appointment ya creados.
- */
-async function expireStaleConversations(): Promise<number> {
-    const cutoff = new Date(Date.now() - CONVERSATION_IDLE_MS);
-    const result = await prisma.whatsAppConversation.updateMany({
-        where: {
-            step: { not: 'IDLE' },
-            updatedAt: { lt: cutoff },
-        },
-        data: {
-            step: 'IDLE',
-            draftName: null,
-            draftIssue: null,
-            draftPlate: null,
-            draftCarId: null,
-            draftStartsAt: null,
-        },
+/** Cambia de paso / guarda drafts y reinicia el contador de "no entendí". */
+async function setConv(waId: string, data: Prisma.WhatsAppConversationUncheckedUpdateInput) {
+    await prisma.whatsAppConversation.upsert({
+        where: { waId },
+        create: { ...(data as Prisma.WhatsAppConversationUncheckedCreateInput), waId },
+        update: { unknownCount: 0, ...data },
     });
-    return result.count;
-}
-
-async function expireConversationIfStale(
-    waId: string,
-    updatedAt: Date,
-    step: string
-): Promise<boolean> {
-    if (step === 'IDLE') return false;
-    if (Date.now() - updatedAt.getTime() < CONVERSATION_IDLE_MS) return false;
-
-    await clearDrafts(waId);
-    await sendTextMessage(
-        waId,
-        `Se cerró el pedido a medias por falta de respuesta (más de 30 minutos).\n` +
-            `No se generó ningún turno.\n\n` +
-            `${HELP_HINT}`
-    );
-    return true;
 }
 
 function asProposedSlots(value: unknown): string[] {
@@ -360,220 +339,14 @@ async function getCurrentOwnerName(carId: string): Promise<string | null> {
     return name || null;
 }
 
-async function proceedAfterPlateResolved(
-    waId: string,
-    plate: string,
-    carId: string | null,
-    ownerName: string | null,
-    introMessage?: string
-) {
-    await prisma.whatsAppConversation.update({
-        where: { waId },
-        data: {
-            draftPlate: plate,
-            draftCarId: carId,
-            draftName: ownerName,
-        },
-    });
-
-    if (carId && ownerName) {
-        if (introMessage) {
-            await sendTextMessage(waId, introMessage);
-        } else {
-            await sendTextMessage(
-                waId,
-                `Encontramos el vehículo *${plate}* a nombre de *${ownerName}*.`
-            );
-        }
-        await askForDate(waId);
-        return;
-    }
-
-    if (carId && !ownerName) {
-        await sendTextMessage(
-            waId,
-            introMessage ||
-                `Encontramos el vehículo *${plate}* en el sistema, pero sin dueño actual cargado.`
-        );
-    } else {
-        await sendTextMessage(
-            waId,
-            introMessage ||
-                `No tenemos el dominio *${plate}* registrado aún. Igual vamos a crear el pedido de turno con esa patente; ` +
-                    `los datos del auto se completan cuando se abra la orden de trabajo.`
-        );
-    }
-
-    await prisma.whatsAppConversation.update({
-        where: { waId },
-        data: { step: 'AWAIT_NAME' },
-    });
-    await sendTextMessage(
-        waId,
-        withStepHint(`¿Cuál es tu *nombre y apellido*?`, 'AWAIT_NAME')
-    );
-}
-
-const PLATE_MIGRATION_NOTE =
-    `_Estamos actualizando los datos del taller al sistema nuevo; por eso a veces la patente puede figurar distinta. ` +
-    `Con tu confirmación la corregimos en el acto._`;
-
-async function askPlateConfirm(waId: string, plate: string, matches: FuzzyPlateMatch[]) {
-    await prisma.whatsAppConversation.update({
-        where: { waId },
-        data: {
-            draftPlate: plate,
-            draftCarId: null,
-            draftName: null,
-            step: 'AWAIT_PLATE_CONFIRM',
-        },
-    });
-
-    if (matches.length === 1) {
-        const match = matches[0];
-        const vehicle = [match.make, match.model].filter(Boolean).join(' ') || 'vehículo';
-        const owner = match.ownerName ? ` a nombre de *${match.ownerName}*` : '';
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `${PLATE_MIGRATION_NOTE}\n\n` +
-                    `Escribiste *${plate}*. En el sistema figura *${match.storedPlate}* (${vehicle}${owner}).\n\n` +
-                    `¿Es tu auto? Respondé *sí* para confirmar (actualizamos el dominio a *${plate}*) ` +
-                    `o *no* para continuar como patente nueva.`,
-                'AWAIT_PLATE_CONFIRM'
-            )
-        );
-        return;
-    }
-
-    const list = matches.map((match, index) => formatFuzzyPlateMatchLine(index, match)).join('\n');
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `${PLATE_MIGRATION_NOTE}\n\n` +
-                `No tenemos *${plate}* exacto, pero encontramos dominios parecidos:\n\n` +
-                `${list}\n\n` +
-                `¿Cuál es el tuyo? Escribí el *número* o el dominio.\n` +
-                `Si ninguno coincide, escribí *ninguno*.`,
-            'AWAIT_PLATE_CONFIRM'
-        )
-    );
-}
-
-async function confirmPlateMatchAndContinue(
-    waId: string,
-    match: FuzzyPlateMatch,
-    correctedPlate: string
-) {
-    const update = await updateCarLicensePlateCorrected(match.carId, correctedPlate);
-    if (!update.ok) {
-        await sendTextMessage(
-            waId,
-            `${update.message} Continuamos con el dominio que escribiste.`
-        );
-        const ownerName = match.ownerName ?? (await getCurrentOwnerName(match.carId));
-        await proceedAfterPlateResolved(waId, correctedPlate, match.carId, ownerName);
-        return;
-    }
-
-    const ownerName = match.ownerName ?? (await getCurrentOwnerName(match.carId));
-    await proceedAfterPlateResolved(
-        waId,
-        correctedPlate,
-        match.carId,
-        ownerName,
-        `Perfecto, actualizamos el dominio a *${correctedPlate}*.`
-    );
-}
-
-async function proceedAsNewPlate(waId: string, plate: string) {
-    await proceedAfterPlateResolved(waId, plate, null, null);
-}
-
-async function handleAwaitPlateConfirm(waId: string, text: string): Promise<void> {
-    const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
-    if (!conv?.draftPlate) {
-        await clearDrafts(waId);
-        await sendTextMessage(
-            waId,
-            `Se perdió el dominio del pedido.\n\n${HELP_HINT}`
-        );
-        return;
-    }
-
-    const plate = conv.draftPlate;
-    const keyword = normalizeBotKeyword(text);
-    const matches = await findFuzzyPlateMatches(plate);
-
-    if (!matches.length) {
-        await proceedAsNewPlate(waId, plate);
-        return;
-    }
-
-    if (NO_WORDS.has(keyword)) {
-        await proceedAsNewPlate(waId, plate);
-        return;
-    }
-
-    if (matches.length === 1 && YES_WORDS.has(keyword)) {
-        await confirmPlateMatchAndContinue(waId, matches[0], plate);
-        return;
-    }
-
-    const indexMatch = text.trim().match(/^(\d+)$/);
-    if (indexMatch) {
-        const idx = parseInt(indexMatch[1], 10) - 1;
-        if (idx >= 0 && idx < matches.length) {
-            await confirmPlateMatchAndContinue(waId, matches[idx], plate);
-            return;
-        }
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Número inválido. Elegí del 1 al ${matches.length}, o escribí *ninguno*.`,
-                'AWAIT_PLATE_CONFIRM'
-            )
-        );
-        return;
-    }
-
-    const byPlate = matches.find(
-        (match) => normalizeLicensePlate(match.storedPlate) === normalizeLicensePlate(text)
-    );
-    if (byPlate) {
-        await confirmPlateMatchAndContinue(waId, byPlate, plate);
-        return;
-    }
-
-    if (matches.length === 1) {
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Respondé *sí* si es tu auto, o *no* para continuar con *${plate}* como patente nueva.`,
-                'AWAIT_PLATE_CONFIRM'
-            )
-        );
-        return;
-    }
-
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `Elegí un número del 1 al ${matches.length}, escribí el dominio de la lista, o *ninguno*.`,
-            'AWAIT_PLATE_CONFIRM'
-        )
-    );
-}
-
+/** Turnos activos de este teléfono que todavía se pueden cancelar (sin OT abierta). */
 async function findClientAppointments(waId: string) {
     const variants = waIdLookupVariants(waId);
     return prisma.appointment.findMany({
         where: {
             status: { in: ['PENDIENTE', 'PROPUESTA_ENVIADA', 'CONFIRMADO'] },
-            OR: [
-                { whatsappWaId: { in: variants } },
-                { clientPhone: { in: variants } },
-            ],
+            interventionId: null,
+            OR: [{ whatsappWaId: { in: variants } }, { clientPhone: { in: variants } }],
         },
         orderBy: { startsAt: 'asc' },
         select: {
@@ -582,461 +355,1232 @@ async function findClientAppointments(waId: string) {
             status: true,
             licensePlate: true,
             clientName: true,
-            clientPhone: true,
-            whatsappWaId: true,
         },
     });
 }
 
-function pickStatusCarByPlate(cars: StatusCar[], plateRaw: string): StatusCar | null {
+type ClientAppointment = Awaited<ReturnType<typeof findClientAppointments>>[number];
+
+function appointmentStatusWord(status: string): string {
+    switch (status) {
+        case 'CONFIRMADO':
+            return 'confirmado';
+        case 'PROPUESTA_ENVIADA':
+            return 'con horarios propuestos';
+        default:
+            return 'pendiente de confirmación';
+    }
+}
+
+function refreshCalendar() {
+    try {
+        revalidatePath('/dashboard/turnos');
+        revalidatePath('/dashboard');
+    } catch {
+        // fuera de un contexto de request (scripts) no hay caché que revalidar
+    }
+}
+
+async function cancelAppointmentByClient(id: string) {
+    await prisma.appointment.update({
+        where: { id },
+        data: {
+            status: 'CANCELADO',
+            canceledAt: new Date(),
+            canceledBy: 'CLIENTE_WHATSAPP',
+            proposedSlots: Prisma.DbNull,
+        },
+    });
+    refreshCalendar();
+}
+
+function carDescription(car: Pick<StatusCar, 'make' | 'model'>): string {
+    return [car.make, car.model].filter(Boolean).join(' ');
+}
+
+function carLabel(car: Pick<StatusCar, 'licensePlate' | 'make' | 'model'>): string {
+    const mm = carDescription(car);
+    return mm ? `${mm} (${car.licensePlate})` : car.licensePlate;
+}
+
+function carOptions(kind: string, cars: StatusCar[]): ChoiceOption[] {
+    return cars.slice(0, 9).map((car) => ({
+        id: `${kind}:${car.id}`,
+        title: car.licensePlate,
+        description: carDescription(car) || undefined,
+    }));
+}
+
+function pickCarByPlate(cars: StatusCar[], plateRaw: string): StatusCar | null {
     const normalized = normalizeLicensePlate(plateRaw);
     if (!normalized) return null;
-    return (
-        cars.find((c) => normalizeLicensePlate(c.licensePlate) === normalized) ?? null
+    return cars.find((c) => normalizeLicensePlate(c.licensePlate) === normalized) ?? null;
+}
+
+/** "1", "2"… → id de la opción correspondiente (para quien responde escribiendo en vez de tocar). */
+function pickByNumber(text: string, options: ChoiceOption[]): string | null {
+    const match = text.trim().match(/^(\d{1,2})$/);
+    if (!match) return null;
+    const idx = parseInt(match[1], 10) - 1;
+    return idx >= 0 && idx < options.length ? options[idx].id : null;
+}
+
+function isYes(text: string) {
+    return YES_WORDS.has(normalizeBotKeyword(text));
+}
+function isNo(text: string) {
+    return NO_WORDS.has(normalizeBotKeyword(text));
+}
+
+// ---------------------------------------------------------------------------
+// Mensajes comunes (menú, contacto, errores)
+// ---------------------------------------------------------------------------
+
+async function greetingName(waId: string): Promise<string | null> {
+    try {
+        const clients = await findClientsByWaId(waId);
+        if (clients.length !== 1) return null;
+        return clients[0].firstName.trim() || null;
+    } catch {
+        return null;
+    }
+}
+
+async function sendMenu(waId: string, opts: { prefix?: string; withName?: boolean } = {}) {
+    const name = opts.withName ? await greetingName(waId) : null;
+    const body = opts.prefix
+        ? `${opts.prefix}\n\n¿En qué te ayudo?`
+        : `Hola${name ? ` ${name}` : ''}, soy el asistente de *Nóbile*. ¿En qué te ayudo?`;
+    await sendChoice(
+        waId,
+        body,
+        [
+            { id: 'menu:turno', title: 'Sacar turno' },
+            { id: 'menu:estado', title: 'Estado de mi auto' },
+            { id: 'menu:mas', title: 'Más opciones' },
+        ],
+        {
+            fallbackText:
+                `${body}\n\nEscribí *turno*, *estado* o *historial*. ` +
+                `Para cancelar un turno escribí *cancelar*.`,
+        }
     );
 }
+
+async function sendMoreOptions(waId: string) {
+    await sendChoice(
+        waId,
+        'Estas son las otras opciones:',
+        [
+            { id: 'menu:historial', title: 'Pedir historial' },
+            { id: 'menu:cancelar', title: 'Cancelar un turno' },
+            { id: 'menu:taller', title: 'Hablar con el taller' },
+        ],
+        {
+            fallbackText:
+                `Otras opciones:\n• *historial* — te mandamos el historial del auto por email\n` +
+                `• *cancelar* — cancelar un turno\n• *taller* — hablar con el taller`,
+        }
+    );
+}
+
+async function sendContact(waId: string, prefix?: string) {
+    const schedule = await getWorkshopSchedule();
+    await sendTextMessage(
+        waId,
+        `${prefix ? `${prefix}\n\n` : ''}Podés comunicarte con el taller al *${getWorkshopContactPhone()}*.\n` +
+            describeSchedule(schedule)
+    );
+}
+
+/** Mensaje sin salida directa: ofrece sacar turno o hablar con el taller. */
+async function sendNoDataChoice(waId: string, body: string) {
+    await sendChoice(
+        waId,
+        body,
+        [
+            { id: 'menu:turno', title: 'Sacar turno' },
+            { id: 'menu:taller', title: 'Hablar con el taller' },
+        ],
+        { fallbackText: `${body}\n\nEscribí *turno* para pedir uno o *taller* para hablar con el taller.` }
+    );
+}
+
+async function sendStaleOption(waId: string) {
+    await sendMenu(waId, { prefix: 'Esa opción ya no está disponible.' });
+}
+
+// ---------------------------------------------------------------------------
+// Turno
+// ---------------------------------------------------------------------------
+
+async function startTurno(waId: string) {
+    await clearDrafts(waId);
+
+    let defaultName: string | null = null;
+    try {
+        const clients = await findClientsByWaId(waId);
+        if (clients.length === 1) {
+            defaultName = `${clients[0].firstName} ${clients[0].lastName}`.trim() || null;
+        }
+    } catch {
+        // si falla la búsqueda seguimos como cliente desconocido
+    }
+
+    await setConv(waId, { step: 'AWAIT_CAR_CHOICE', draftName: defaultName });
+    await askCarChoice(waId);
+}
+
+function carChoiceOptions(cars: StatusCar[]): ChoiceOption[] {
+    if (cars.length === 1) {
+        return [
+            { id: `car:${cars[0].id}`, title: 'Sí' },
+            { id: 'car:other', title: 'Otro auto' },
+        ];
+    }
+    return [...carOptions('car', cars), { id: 'car:other', title: 'Otro auto' }];
+}
+
+async function askCarChoice(waId: string) {
+    const cars = await findCarsForWhatsApp(waId, { onlyWithHistory: false });
+    if (cars.length === 0) {
+        await askPlate(waId);
+        return;
+    }
+    if (cars.length === 1) {
+        await sendChoice(waId, `¿El turno es para tu *${carLabel(cars[0])}*?`, carChoiceOptions(cars));
+        return;
+    }
+    await sendChoice(waId, '¿Para cuál de tus autos es el turno?', carChoiceOptions(cars), {
+        listButtonLabel: 'Ver autos',
+    });
+}
+
+async function askPlate(waId: string) {
+    await setConv(waId, { step: 'AWAIT_PLATE' });
+    await sendTextMessage(
+        waId,
+        `Pasame el *dominio* del auto, sin guiones (por ejemplo *ABC123* o *AA123BB*).`
+    );
+}
+
+async function askName(waId: string) {
+    await setConv(waId, { step: 'AWAIT_NAME' });
+    await sendTextMessage(waId, `¿Cuál es tu *nombre y apellido*?`);
+}
+
+async function askIssue(waId: string, prefix?: string) {
+    await setConv(waId, { step: 'AWAIT_ISSUE' });
+    await sendTextMessage(
+        waId,
+        `${prefix ? `${prefix} ` : ''}¿Qué le pasa al auto o qué trabajo necesita?`
+    );
+}
+
+/** Datos del auto ya resueltos: chequea turno duplicado y sigue con nombre o avería. */
+async function proceedWithResolved(
+    waId: string,
+    resolved: { plate: string; carId: string | null; ownerName: string | null; plateNote?: string | null }
+) {
+    const conv = await getOrCreateConversation(waId);
+    await setConv(waId, {
+        draftPlate: resolved.plate,
+        draftCarId: resolved.carId,
+        draftName: resolved.ownerName ?? conv.draftName,
+        draftPlateNote: resolved.plateNote ?? null,
+    });
+
+    const existing = (await findClientAppointments(waId)).find(
+        (ap) =>
+            ap.licensePlate && normalizeLicensePlate(ap.licensePlate) === normalizeLicensePlate(resolved.plate)
+    );
+    if (existing) {
+        await setConv(waId, { step: 'AWAIT_DUP', draftExtra: existing.id });
+        await askDup(waId);
+        return;
+    }
+
+    await continueAfterCar(waId);
+}
+
+async function continueAfterCar(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    if (!conv.draftName) {
+        await askName(waId);
+        return;
+    }
+    await askIssue(waId, conv.draftPlate ? `Perfecto, *${conv.draftPlate}*.` : undefined);
+}
+
+async function askDup(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    const existing = conv.draftExtra
+        ? await prisma.appointment.findUnique({
+              where: { id: conv.draftExtra },
+              select: { startsAt: true, status: true, licensePlate: true },
+          })
+        : null;
+    if (!existing) {
+        await continueAfterCar(waId);
+        return;
+    }
+    const { full } = formatDateTimeEsAr(existing.startsAt);
+    await sendChoice(
+        waId,
+        `Ya tenés un turno para *${existing.licensePlate ?? conv.draftPlate}* el *${full}* ` +
+            `(${appointmentStatusWord(existing.status)}). ¿Qué querés hacer?`,
+        [
+            { id: 'dup:keep', title: 'Mantenerlo' },
+            { id: 'dup:cancel', title: 'Cancelarlo' },
+        ]
+    );
+}
+
+async function handleAwaitDup(waId: string, conv: Conversation, input: StepInput) {
+    const choice =
+        input.id ?? (isNo(input.text) ? 'dup:cancel' : isYes(input.text) ? 'dup:keep' : null);
+    if (choice === 'dup:keep') {
+        await clearDrafts(waId);
+        await sendTextMessage(waId, 'Perfecto, tu turno queda como está.');
+        return;
+    }
+    if (choice === 'dup:cancel' && conv.draftExtra) {
+        await cancelAppointmentByClient(conv.draftExtra);
+        await setConv(waId, { draftExtra: null });
+        await sendTextMessage(waId, 'Listo, cancelé el turno anterior.');
+        await continueAfterCar(waId);
+        return;
+    }
+    await stepMiss(waId, conv, 'Tocá una de las dos opciones.');
+}
+
+async function handleAwaitCarChoice(waId: string, conv: Conversation, input: StepInput) {
+    const cars = await findCarsForWhatsApp(waId, { onlyWithHistory: false });
+    const options = carChoiceOptions(cars);
+
+    let choice = input.id ?? pickByNumber(input.text, options);
+    if (!choice) {
+        if (isNo(input.text)) {
+            choice = 'car:other';
+        } else if (cars.length === 1 && isYes(input.text)) {
+            choice = `car:${cars[0].id}`;
+        } else {
+            const byPlate = pickCarByPlate(cars, input.text);
+            if (byPlate) choice = `car:${byPlate.id}`;
+        }
+    }
+
+    if (choice === 'car:other') {
+        await askPlate(waId);
+        return;
+    }
+    const car = choice ? cars.find((c) => `car:${c.id}` === choice) : null;
+    if (!car) {
+        await stepMiss(waId, conv, 'No encontré ese auto.');
+        return;
+    }
+    const ownerName = (await getCurrentOwnerName(car.id)) ?? conv.draftName;
+    await proceedWithResolved(waId, {
+        plate: car.licensePlate,
+        carId: car.id,
+        ownerName,
+    });
+}
+
+async function handleAwaitPlate(waId: string, conv: Conversation, input: StepInput) {
+    const validation = validateNewLicensePlate(input.text);
+    if (!validation.ok || !validation.plate) {
+        await stepMiss(
+            waId,
+            conv,
+            `No entendí el dominio. ${validation.message || ''} Ejemplos: *ABC123* o *AA123BB*.`.trim()
+        );
+        return;
+    }
+
+    const plate = validation.plate;
+    const carId = await findCarIdByNormalizedPlateExact(plate);
+    if (carId) {
+        const ownerName = await getCurrentOwnerName(carId);
+        await proceedWithResolved(waId, { plate, carId, ownerName });
+        return;
+    }
+
+    const fuzzy = await findFuzzyPlateMatches(plate);
+    if (fuzzy.length > 0) {
+        await setConv(waId, { step: 'AWAIT_PLATE_CONFIRM', draftPlate: plate });
+        await askPlateConfirm(waId);
+        return;
+    }
+
+    await proceedWithResolved(waId, { plate, carId: null, ownerName: null });
+}
+
+function fuzzyOptions(matches: FuzzyPlateMatch[]): ChoiceOption[] {
+    if (matches.length === 1) {
+        return [
+            { id: `fuzzy:${matches[0].carId}`, title: 'Sí, es ese' },
+            { id: 'fuzzy:none', title: 'No, es otro' },
+        ];
+    }
+    return [
+        ...matches.slice(0, 9).map((m) => ({
+            id: `fuzzy:${m.carId}`,
+            title: m.storedPlate,
+            description:
+                [[m.make, m.model].filter(Boolean).join(' '), m.ownerName].filter(Boolean).join(' · ') ||
+                undefined,
+        })),
+        { id: 'fuzzy:none', title: 'Ninguno' },
+    ];
+}
+
+async function askPlateConfirm(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    if (!conv.draftPlate) {
+        await askPlate(waId);
+        return;
+    }
+    const matches = await findFuzzyPlateMatches(conv.draftPlate);
+    if (!matches.length) {
+        await proceedWithResolved(waId, { plate: conv.draftPlate, carId: null, ownerName: null });
+        return;
+    }
+    if (matches.length === 1) {
+        const m = matches[0];
+        const vehicle = [m.make, m.model].filter(Boolean).join(' ') || 'un vehículo';
+        const owner = m.ownerName ? ` de *${m.ownerName}*` : '';
+        await sendChoice(
+            waId,
+            `Escribiste *${conv.draftPlate}* y tenemos cargado *${m.storedPlate}* (${vehicle}${owner}). ¿Es tu auto?`,
+            fuzzyOptions(matches)
+        );
+        return;
+    }
+    await sendChoice(
+        waId,
+        `No tenemos *${conv.draftPlate}* exacto, pero hay dominios parecidos. ¿Cuál es el tuyo?`,
+        fuzzyOptions(matches),
+        { listButtonLabel: 'Ver autos' }
+    );
+}
+
+async function handleAwaitPlateConfirm(waId: string, conv: Conversation, input: StepInput) {
+    if (!conv.draftPlate) {
+        await askPlate(waId);
+        return;
+    }
+    const plate = conv.draftPlate;
+    const matches = await findFuzzyPlateMatches(plate);
+    if (!matches.length) {
+        await proceedWithResolved(waId, { plate, carId: null, ownerName: null });
+        return;
+    }
+
+    const options = fuzzyOptions(matches);
+    let choice = input.id ?? pickByNumber(input.text, options);
+    if (!choice) {
+        if (isNo(input.text)) choice = 'fuzzy:none';
+        else if (matches.length === 1 && isYes(input.text)) choice = `fuzzy:${matches[0].carId}`;
+        else {
+            const byPlate = matches.find(
+                (m) => normalizeLicensePlate(m.storedPlate) === normalizeLicensePlate(input.text)
+            );
+            if (byPlate) choice = `fuzzy:${byPlate.carId}`;
+        }
+    }
+
+    if (choice === 'fuzzy:none') {
+        await proceedWithResolved(waId, { plate, carId: null, ownerName: null });
+        return;
+    }
+    const match = choice ? matches.find((m) => `fuzzy:${m.carId}` === choice) : null;
+    if (!match) {
+        await stepMiss(waId, conv, 'Elegí una de las opciones.');
+        return;
+    }
+
+    // El bot NO modifica el dominio del auto: se guarda lo que escribió el cliente
+    // y una nota para que el taller valide o corrija el dato.
+    const ownerName = match.ownerName ?? (await getCurrentOwnerName(match.carId));
+    await proceedWithResolved(waId, {
+        plate,
+        carId: match.carId,
+        ownerName,
+        plateNote: `El cliente escribió ${plate}; en el sistema figura ${match.storedPlate}. Validar el dominio.`,
+    });
+}
+
+async function handleAwaitName(waId: string, conv: Conversation, input: StepInput) {
+    const name = input.text.slice(0, 120).trim();
+    if (!name) {
+        await stepMiss(waId, conv, 'Necesito tu *nombre y apellido* para el turno.');
+        return;
+    }
+    await setConv(waId, { draftName: name });
+    await askIssue(waId, `Gracias, ${name.split(' ')[0]}.`);
+}
+
+async function handleAwaitIssue(waId: string, _conv: Conversation, input: StepInput) {
+    const issue = input.text.slice(0, 500).trim();
+    await setConv(waId, { draftIssue: issue });
+    await askDay(waId);
+}
+
+// --- Día y hora -------------------------------------------------------------
+
+function pad2(n: number) {
+    return String(n).padStart(2, '0');
+}
+
+function dayId(day: Date) {
+    return `day:${day.getFullYear()}-${pad2(day.getMonth() + 1)}-${pad2(day.getDate())}`;
+}
+
+function parseDayId(id: string): Date | null {
+    const match = id.match(/^day:(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    return new Date(parseInt(match[1], 10), parseInt(match[2], 10) - 1, parseInt(match[3], 10));
+}
+
+function timeId(slot: Date) {
+    return `time:${pad2(slot.getHours())}:${pad2(slot.getMinutes())}`;
+}
+
+function hhmm(slot: Date) {
+    return `${pad2(slot.getHours())}:${pad2(slot.getMinutes())}`;
+}
+
+function sameDay(a: Date, b: Date) {
+    return (
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate()
+    );
+}
+
+function dayTitle(day: Date, now: Date) {
+    const short = `${pad2(day.getDate())}/${pad2(day.getMonth() + 1)}`;
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    if (sameDay(day, now)) return `Hoy · ${short}`;
+    if (sameDay(day, tomorrow)) return `Mañana · ${short}`;
+    const weekday = day.toLocaleDateString('es-AR', { weekday: 'short' }).replace(/\./g, '');
+    return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${short}`;
+}
+
+async function dayOptions(now: Date): Promise<{ options: ChoiceOption[]; empty: boolean }> {
+    const schedule = await getWorkshopSchedule();
+    const days = await listAvailableDays(schedule, now, { maxDays: 7 });
+    return {
+        empty: days.length === 0,
+        options: days.map(({ day, slots }) => ({
+            id: dayId(day),
+            title: dayTitle(day, now),
+            description: `Libres: ${slots.map(hhmm).join(', ')}`,
+        })),
+    };
+}
+
+async function askDay(waId: string, prefix?: string) {
+    const now = new Date();
+    const { options, empty } = await dayOptions(now);
+    if (empty) {
+        await clearDrafts(waId);
+        await sendContact(
+            waId,
+            'Por ahora no tenemos horarios libres en los próximos días, así que no puedo reservarlo por acá.'
+        );
+        return;
+    }
+    await setConv(waId, { step: 'AWAIT_SLOT_DAY', draftStartsAt: null });
+    await sendChoice(
+        waId,
+        `${prefix ? `${prefix}\n\n` : ''}¿Qué día querés traer el auto? Elegí uno o escribilo ` +
+            `(por ejemplo *mañana 9* o *15/8*).`,
+        options,
+        { listButtonLabel: 'Ver días' }
+    );
+}
+
+type TimeOptionsResult = { options: ChoiceOption[]; slots: Date[] };
+
+async function timeOptions(day: Date, near?: Date): Promise<TimeOptionsResult> {
+    const schedule = await getWorkshopSchedule();
+    let slots = await listFreeSlotsForDay(day, schedule);
+    if (near) {
+        const target = near.getTime();
+        slots = [...slots]
+            .sort((a, b) => Math.abs(a.getTime() - target) - Math.abs(b.getTime() - target))
+            .slice(0, 3)
+            .sort((a, b) => a.getTime() - b.getTime());
+    }
+    return {
+        slots,
+        options: [
+            ...slots.map((slot) => ({ id: timeId(slot), title: `${hhmm(slot)} hs` })),
+            { id: 'day:change', title: 'Cambiar día' },
+        ],
+    };
+}
+
+async function askTime(waId: string, day: Date, opts: { prefix?: string; near?: Date } = {}) {
+    const { options, slots } = await timeOptions(day, opts.near);
+    if (!slots.length) {
+        await askDay(waId, `${dayLabelShort(day)} ya no tiene horarios libres.`);
+        return;
+    }
+    await setConv(waId, { step: 'AWAIT_SLOT_TIME', draftStartsAt: day });
+    const dayLabel = day.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
+    await sendChoice(
+        waId,
+        `${opts.prefix ? `${opts.prefix}\n\n` : ''}Para el *${dayLabel}* tenemos estos horarios. ` +
+            `Elegí uno o escribí otra hora.`,
+        options,
+        { listButtonLabel: 'Ver horarios' }
+    );
+}
+
+function dayLabelShort(day: Date) {
+    return `Ese día (${day.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' })})`;
+}
+
+/** Valida el día elegido; si trae hora, sigue con la hora, si no pide el horario. */
+async function applyDay(
+    waId: string,
+    day: Date,
+    time?: ReturnType<typeof parseClientTime>
+) {
+    const now = new Date();
+    if (day.getTime() < startOfDay(now).getTime()) {
+        await askDay(waId, 'Ese día ya pasó.');
+        return;
+    }
+    const schedule = await getWorkshopSchedule();
+    if (!isWorkingDay(day, schedule)) {
+        await askDay(waId, `Los *${pluralWeekday(day)}* el taller no atiende. ${describeSchedule(schedule)}`);
+        return;
+    }
+    const free = await listFreeSlotsForDay(day, schedule, now);
+    if (!free.length) {
+        await askDay(waId, 'Ese día no tiene horarios libres.');
+        return;
+    }
+
+    if (!time) {
+        await askTime(waId, day);
+        return;
+    }
+    if (!time.ok) {
+        await setConv(waId, { step: 'AWAIT_SLOT_TIME', draftStartsAt: day });
+        await sendTextMessage(
+            waId,
+            `¿Esa hora es de la mañana o de la tarde? Escribila en formato de 24 horas ` +
+                `(*16* para las 4 de la tarde) o aclarame, por ejemplo *4 de la tarde*.`
+        );
+        return;
+    }
+    await applyTime(waId, day, time.hour, time.minute);
+}
+
+async function applyTime(waId: string, day: Date, hour: number, minute: number) {
+    const now = new Date();
+    const startsAt = combineDateAndTime(day, hour, minute);
+    const schedule = await getWorkshopSchedule();
+
+    const slotCheck = checkSlotWithinSchedule(startsAt, schedule);
+    if (!slotCheck.ok) {
+        await askTime(waId, day, { prefix: slotCheck.message });
+        return;
+    }
+    if (startsAt.getTime() <= now.getTime()) {
+        await askTime(waId, day, { prefix: 'Ese horario ya pasó.' });
+        return;
+    }
+    if (!(await isSlotFree(startsAt))) {
+        await askTime(waId, day, {
+            prefix: `A las *${hhmm(startsAt)}* ya tenemos otro turno.`,
+            near: startsAt,
+        });
+        return;
+    }
+    await askConfirm(waId, startsAt);
+}
+
+async function handleAwaitSlotDay(waId: string, conv: Conversation, input: StepInput) {
+    const now = new Date();
+    if (input.id) {
+        const day = parseDayId(input.id);
+        if (day) {
+            await applyDay(waId, day);
+            return;
+        }
+    }
+
+    const { options } = await dayOptions(now);
+    const pickedId = pickByNumber(input.text, options);
+    if (pickedId) {
+        const day = parseDayId(pickedId);
+        if (day) {
+            await applyDay(waId, day);
+            return;
+        }
+    }
+
+    const dayOnly = parseClientDate(input.text, now);
+    if (dayOnly) {
+        await applyDay(waId, dayOnly);
+        return;
+    }
+    const withTime = parseClientDateTime(input.text, now);
+    if (withTime) {
+        await applyDay(waId, withTime.day, withTime.time);
+        return;
+    }
+    await stepMiss(waId, conv, 'No entendí ese día.');
+}
+
+async function handleAwaitSlotTime(waId: string, conv: Conversation, input: StepInput) {
+    const day = conv.draftStartsAt;
+    if (!day) {
+        await askDay(waId, 'Se perdió el día elegido, lo volvemos a pedir.');
+        return;
+    }
+
+    if (input.id === 'day:change' || CHANGE_WORDS.has(normalizeBotKeyword(input.text))) {
+        await askDay(waId, 'Sin problema, elegí otro día.');
+        return;
+    }
+    if (input.id?.startsWith('time:')) {
+        const match = input.id.match(/^time:(\d{2}):(\d{2})$/);
+        if (match) {
+            await applyTime(waId, day, parseInt(match[1], 10), parseInt(match[2], 10));
+            return;
+        }
+    }
+
+    const { options } = await timeOptions(day);
+    const pickedId = pickByNumber(input.text, options);
+    if (pickedId === 'day:change') {
+        await askDay(waId, 'Sin problema, elegí otro día.');
+        return;
+    }
+    if (pickedId?.startsWith('time:')) {
+        const match = pickedId.match(/^time:(\d{2}):(\d{2})$/);
+        if (match) {
+            await applyTime(waId, day, parseInt(match[1], 10), parseInt(match[2], 10));
+            return;
+        }
+    }
+
+    const parsed = parseClientTime(input.text);
+    if (parsed.ok) {
+        await applyTime(waId, day, parsed.hour, parsed.minute);
+        return;
+    }
+    if (parsed.reason === 'AMBIGUOUS') {
+        await sendTextMessage(
+            waId,
+            `¿Esa hora es de la mañana o de la tarde? Escribila en formato de 24 horas ` +
+                `(*16* para las 4 de la tarde) o aclarame, por ejemplo *4 de la tarde*.`
+        );
+        return;
+    }
+
+    // ¿Quiso cambiar de día escribiendo otra fecha?
+    const now = new Date();
+    const otherDay = parseClientDate(input.text, now);
+    if (otherDay) {
+        await applyDay(waId, otherDay);
+        return;
+    }
+    const withTime = parseClientDateTime(input.text, now);
+    if (withTime) {
+        await applyDay(waId, withTime.day, withTime.time);
+        return;
+    }
+
+    await stepMiss(waId, conv, 'No entendí esa hora.');
+}
+
+// --- Confirmación -----------------------------------------------------------
+
+async function askConfirm(waId: string, startsAt?: Date) {
+    if (startsAt) await setConv(waId, { step: 'AWAIT_CONFIRM', draftStartsAt: startsAt });
+    const conv = await getOrCreateConversation(waId);
+    if (!conv.draftIssue || !conv.draftPlate || !conv.draftStartsAt || !conv.draftName) {
+        await clearDrafts(waId);
+        await sendMenu(waId, { prefix: 'Se perdieron algunos datos del pedido, empecemos de nuevo.' });
+        return;
+    }
+    const { full } = formatDateTimeEsAr(conv.draftStartsAt);
+    await sendChoice(
+        waId,
+        `Revisá tu pedido:\n` +
+            `• Auto: *${conv.draftPlate}*\n` +
+            `• Motivo: ${conv.draftIssue}\n` +
+            `• Llegada: *${full}*`,
+        [
+            { id: 'confirm:yes', title: 'Confirmar' },
+            { id: 'confirm:change', title: 'Cambiar horario' },
+        ]
+    );
+}
+
+async function handleAwaitConfirm(waId: string, conv: Conversation, input: StepInput) {
+    const choice =
+        input.id ??
+        (isYes(input.text)
+            ? 'confirm:yes'
+            : isNo(input.text) || CHANGE_WORDS.has(normalizeBotKeyword(input.text))
+              ? 'confirm:change'
+              : null);
+
+    if (choice === 'confirm:change') {
+        await askDay(waId, 'Sin problema, elegí otro horario.');
+        return;
+    }
+    if (choice === 'confirm:yes') {
+        await createPendingFromDraft(waId, conv);
+        return;
+    }
+    await stepMiss(waId, conv, 'Tocá *Confirmar* para dejar el pedido o *Cambiar horario*.');
+}
+
+async function createPendingFromDraft(waId: string, conv: Conversation) {
+    if (!conv.draftIssue || !conv.draftPlate || !conv.draftStartsAt || !conv.draftName) {
+        await clearDrafts(waId);
+        await sendMenu(waId, { prefix: 'Se perdieron algunos datos del pedido, empecemos de nuevo.' });
+        return;
+    }
+
+    // Otro cliente pudo tomar el horario mientras este confirmaba.
+    if (!(await isSlotFree(conv.draftStartsAt))) {
+        await askTime(waId, startOfDay(conv.draftStartsAt), {
+            prefix: 'Ese horario se acaba de ocupar. Elegí otro.',
+            near: conv.draftStartsAt,
+        });
+        return;
+    }
+
+    const botId = await getOrCreateBotUserId();
+    const phone = normalizeWaId(waId) || waId;
+    const notes = conv.draftPlateNote
+        ? `${conv.draftIssue}\n[Dominio a validar] ${conv.draftPlateNote}`
+        : conv.draftIssue;
+
+    await prisma.appointment.create({
+        data: {
+            startsAt: conv.draftStartsAt,
+            clientName: conv.draftName,
+            clientPhone: phone,
+            notes,
+            licensePlate: conv.draftPlate,
+            carId: conv.draftCarId || null,
+            status: 'PENDIENTE',
+            source: 'WHATSAPP',
+            whatsappWaId: waId,
+            createdById: botId,
+        },
+    });
+    refreshCalendar();
+    await clearDrafts(waId);
+
+    const { full } = formatDateTimeEsAr(conv.draftStartsAt);
+    await sendTextMessage(
+        waId,
+        `Listo ${conv.draftName.split(' ')[0]}, anoté tu pedido para el *${full}* (${conv.draftPlate}). ` +
+            `Queda *pendiente de confirmación* del taller y te avisamos por acá.`
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Estado de la OT
+// ---------------------------------------------------------------------------
 
 async function sendOtStatusForCar(waId: string, car: StatusCar) {
     await clearDrafts(waId);
     const reply = await buildOtStatusReply(car);
-    await sendTextMessage(
-        waId,
-        `${reply}\n\n` +
-            `_Si necesitás otra cosa: *turno* · *estado* · *cancelar* · *ayuda*_`
-    );
+    await sendTextMessage(waId, reply);
 }
 
-/**
- * Estado del auto: WhatsApp del chat → solo autos con OT ABIERTA.
- * Si hay más de uno con OT abierta, pide el dominio.
- */
-async function tryHandleStatus(waId: string, text: string): Promise<boolean> {
-    const lower = text.toLowerCase().trim();
-    // Acepta dominio con o sin guiones: estado JSB555 / estado JSB-555
-    const plateSuffix = lower.match(/^(?:estado|consultar?)\s+([a-z0-9-]{6,10})$/i);
-
-    if (!STATUS_WORDS.has(lower) && !plateSuffix) {
-        return false;
-    }
-
+async function startStatus(waId: string, plate?: string) {
+    await clearDrafts(waId);
     const cars = await findCarsWithOpenOtForWhatsApp(waId);
     if (cars.length === 0) {
-        await clearDrafts(waId);
-        await sendTextMessage(
+        await sendNoDataChoice(
             waId,
-            `No encontré *órdenes abiertas* asociadas a este número.\n` +
-                `Tiene que ser el WhatsApp del cliente cargado en el taller, ` +
-                `y el auto tiene que tener una OT *ABIERTA*.\n\n${HELP_HINT}`
+            'No veo ningún auto tuyo en el taller en este momento. ¿Querés sacar un turno o hablar con el taller?'
         );
-        return true;
+        return;
     }
 
-    if (plateSuffix) {
-        const car = pickStatusCarByPlate(cars, plateSuffix[1]);
+    if (plate) {
+        const car = pickCarByPlate(cars, plate);
         if (!car) {
-            await sendTextMessage(
+            await sendNoDataChoice(
                 waId,
-                `Ese dominio no tiene OT abierta con este número.\n` +
-                    `Autos en taller ahora:\n${formatCarChoiceList(cars)}\n\n` +
-                    withStepHint(
-                        `Escribí el *dominio* o *estado AA123BB*.`,
-                        'AWAIT_STATUS_PLATE'
-                    )
+                `No veo el dominio *${normalizeLicensePlate(plate)}* en el taller con este número.`
             );
-            return true;
+            return;
         }
         await sendOtStatusForCar(waId, car);
-        return true;
+        return;
     }
 
     if (cars.length === 1) {
         await sendOtStatusForCar(waId, cars[0]);
-        return true;
+        return;
     }
 
-    await prisma.whatsAppConversation.upsert({
-        where: { waId },
-        create: { waId, step: 'AWAIT_STATUS_PLATE' },
-        update: {
-            step: 'AWAIT_STATUS_PLATE',
-            draftName: null,
-            draftIssue: null,
-            draftPlate: null,
-            draftCarId: null,
-            draftStartsAt: null,
-        },
-    });
-
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `Tenés *más de un auto con OT abierta* en este número.\n` +
-                `¿De cuál querés el estado? Escribí el *dominio* o el número:\n\n` +
-                `${formatCarChoiceList(cars)}`,
-            'AWAIT_STATUS_PLATE'
-        )
-    );
-    return true;
+    await setConv(waId, { step: 'AWAIT_STATUS_PLATE' });
+    await askStatusCar(waId);
 }
 
-async function handleAwaitStatusPlate(waId: string, text: string): Promise<void> {
+async function askStatusCar(waId: string) {
+    const cars = await findCarsWithOpenOtForWhatsApp(waId);
+    await sendChoice(waId, '¿De cuál auto querés saber el estado?', carOptions('scar', cars), {
+        listButtonLabel: 'Ver autos',
+    });
+}
+
+async function handleAwaitStatusCar(waId: string, conv: Conversation, input: StepInput) {
     const cars = await findCarsWithOpenOtForWhatsApp(waId);
     if (cars.length === 0) {
         await clearDrafts(waId);
-        await sendTextMessage(
-            waId,
-            `No encontré órdenes abiertas asociadas a este número.\n\n${HELP_HINT}`
-        );
+        await sendNoDataChoice(waId, 'No veo ningún auto tuyo en el taller en este momento.');
         return;
     }
-
-    const indexMatch = text.trim().match(/^(\d+)$/);
-    if (indexMatch) {
-        const idx = parseInt(indexMatch[1], 10) - 1;
-        if (idx >= 0 && idx < cars.length) {
-            await sendOtStatusForCar(waId, cars[idx]);
-            return;
-        }
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Número inválido. Elegí del 1 al ${cars.length}, o escribí el dominio.`,
-                'AWAIT_STATUS_PLATE'
-            )
-        );
-        return;
-    }
-
-    const plate = normalizeLicensePlate(text);
-    const car = pickStatusCarByPlate(cars, plate);
+    const options = carOptions('scar', cars);
+    const choice = input.id ?? pickByNumber(input.text, options);
+    const car = choice
+        ? cars.find((c) => `scar:${c.id}` === choice)
+        : pickCarByPlate(cars, input.text);
     if (!car) {
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `No entendí ese dominio.\n` +
-                    `Autos en taller:\n${formatCarChoiceList(cars)}`,
-                'AWAIT_STATUS_PLATE'
-            )
-        );
+        await stepMiss(waId, conv, 'No encontré ese auto.');
         return;
     }
-
     await sendOtStatusForCar(waId, car);
 }
 
-async function askHistoryEmail(waId: string, car: StatusCar) {
-    await prisma.whatsAppConversation.upsert({
-        where: { waId },
-        create: {
-            waId,
-            step: 'AWAIT_HISTORY_EMAIL',
-            draftCarId: car.id,
-            draftPlate: car.licensePlate,
-        },
-        update: {
-            step: 'AWAIT_HISTORY_EMAIL',
-            draftCarId: car.id,
-            draftPlate: car.licensePlate,
-            draftName: null,
-            draftIssue: null,
-            draftStartsAt: null,
-        },
-    });
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `Perfecto: historial de *${car.licensePlate}*.\n\n` +
-                `Un *administrador* del taller tiene que autorizar el envío.\n` +
-                `¿A qué *email* te lo mandamos? (ese mail queda registrado en tu ficha de cliente)`,
-            'AWAIT_HISTORY_EMAIL'
-        )
-    );
-}
+// ---------------------------------------------------------------------------
+// Historial
+// ---------------------------------------------------------------------------
 
-/**
- * Historial del auto: WhatsApp → autos del teléfono → (placa si hay varios) → email → PENDIENTE.
- */
-async function tryHandleHistory(waId: string, text: string): Promise<boolean> {
-    const intent = parseHistoryIntent(text);
-    if (!intent.hit) {
-        return false;
-    }
-
-    // Busca autos asociados a este WhatsApp (dueño / OT / turnos) con historial de taller
+async function startHistory(waId: string, plate?: string) {
+    await clearDrafts(waId);
     const cars = await findCarsWithHistoryForWhatsApp(waId);
     if (cars.length === 0) {
-        await clearDrafts(waId);
-        await sendTextMessage(
+        await sendNoDataChoice(
             waId,
-            `No encontré *autos con historial* asociados a este WhatsApp.\n` +
-                `Tiene que ser el número del cliente en el taller, y el auto tiene que tener OT abierta o cerrada.\n\n` +
-                `${HELP_HINT}`
+            'No encuentro historial de taller asociado a este número. ¿Querés sacar un turno o hablar con el taller?'
         );
-        return true;
+        return;
     }
 
-    if (intent.plate) {
-        const car = pickStatusCarByPlate(cars, intent.plate);
+    if (plate) {
+        const car = pickCarByPlate(cars, plate);
         if (!car) {
-            await sendTextMessage(
+            await sendNoDataChoice(
                 waId,
-                withStepHint(
-                    `Ese dominio no tiene historial con este número.\n` +
-                        `Tus autos:\n${formatCarChoiceList(cars)}`,
-                    'AWAIT_HISTORY_PLATE'
-                )
+                `No encuentro historial del dominio *${normalizeLicensePlate(plate)}* con este número.`
             );
-            return true;
+            return;
         }
         await askHistoryEmail(waId, car);
-        return true;
+        return;
     }
 
     if (cars.length === 1) {
         await askHistoryEmail(waId, cars[0]);
-        return true;
+        return;
     }
 
-    await prisma.whatsAppConversation.upsert({
-        where: { waId },
-        create: { waId, step: 'AWAIT_HISTORY_PLATE' },
-        update: {
-            step: 'AWAIT_HISTORY_PLATE',
-            draftName: null,
-            draftIssue: null,
-            draftPlate: null,
-            draftCarId: null,
-            draftStartsAt: null,
-        },
-    });
-
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `Tenés *${cars.length}* autos asociados a este número.\n` +
-                `¿De cuál querés el historial? Escribí el *dominio* o el número de la lista:\n\n` +
-                `${formatCarChoiceList(cars)}`,
-            'AWAIT_HISTORY_PLATE'
-        )
-    );
-    return true;
+    await setConv(waId, { step: 'AWAIT_HISTORY_PLATE' });
+    await askHistoryCar(waId);
 }
 
-async function handleAwaitHistoryPlate(waId: string, text: string): Promise<void> {
+async function askHistoryCar(waId: string) {
+    const cars = await findCarsWithHistoryForWhatsApp(waId);
+    await sendChoice(waId, '¿De cuál auto querés el historial?', carOptions('hcar', cars), {
+        listButtonLabel: 'Ver autos',
+    });
+}
+
+async function handleAwaitHistoryCar(waId: string, conv: Conversation, input: StepInput) {
     const cars = await findCarsWithHistoryForWhatsApp(waId);
     if (cars.length === 0) {
         await clearDrafts(waId);
-        await sendTextMessage(waId, `No encontré historial para este número.\n\n${HELP_HINT}`);
+        await sendNoDataChoice(waId, 'No encuentro historial de taller asociado a este número.');
         return;
     }
-
-    const indexMatch = text.trim().match(/^(\d+)$/);
-    if (indexMatch) {
-        const idx = parseInt(indexMatch[1], 10) - 1;
-        if (idx >= 0 && idx < cars.length) {
-            await askHistoryEmail(waId, cars[idx]);
-            return;
-        }
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Número inválido. Elegí del 1 al ${cars.length}, o escribí el dominio.`,
-                'AWAIT_HISTORY_PLATE'
-            )
-        );
-        return;
-    }
-
-    const car = pickStatusCarByPlate(cars, normalizeLicensePlate(text));
+    const options = carOptions('hcar', cars);
+    const choice = input.id ?? pickByNumber(input.text, options);
+    const car = choice
+        ? cars.find((c) => `hcar:${c.id}` === choice)
+        : pickCarByPlate(cars, input.text);
     if (!car) {
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `No entendí ese dominio.\nAutos:\n${formatCarChoiceList(cars)}`,
-                'AWAIT_HISTORY_PLATE'
-            )
-        );
+        await stepMiss(waId, conv, 'No encontré ese auto.');
         return;
     }
     await askHistoryEmail(waId, car);
 }
 
-async function handleAwaitHistoryEmail(waId: string, text: string): Promise<void> {
-    const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
-    if (!conv?.draftCarId) {
-        await clearDrafts(waId);
-        await sendTextMessage(waId, `Se perdió el auto elegido.\n\n${HELP_HINT}`);
+async function savedClientEmail(waId: string): Promise<string | null> {
+    try {
+        const clients = await findClientsByWaId(waId);
+        return clients.find((c) => c.email)?.email ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function askHistoryEmail(waId: string, car: StatusCar) {
+    const saved = await savedClientEmail(waId);
+    if (saved) {
+        await setConv(waId, {
+            step: 'AWAIT_HISTORY_EMAIL_CHOICE',
+            draftCarId: car.id,
+            draftPlate: car.licensePlate,
+            draftExtra: saved,
+        });
+        await askHistoryEmailChoice(waId);
         return;
     }
-
-    if (!isValidEmail(text)) {
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Ese email no parece válido. Ejemplo: *juan@correo.com*`,
-                'AWAIT_HISTORY_EMAIL'
-            )
-        );
-        return;
-    }
-
-    const result = await createPendingHistoryRequest({
-        waId,
-        carId: conv.draftCarId,
-        email: text,
+    await setConv(waId, {
+        step: 'AWAIT_HISTORY_EMAIL',
+        draftCarId: car.id,
+        draftPlate: car.licensePlate,
+        draftExtra: null,
     });
+    await askHistoryEmailText(waId);
+}
 
+async function askHistoryEmailChoice(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    await sendChoice(
+        waId,
+        `Historial de *${conv.draftPlate}*. ¿Te lo mandamos a *${conv.draftExtra}*? ` +
+            `Un administrador del taller tiene que autorizar el envío.`,
+        [
+            { id: 'email:use', title: 'Usar ese email' },
+            { id: 'email:other', title: 'Otro email' },
+        ]
+    );
+}
+
+async function askHistoryEmailText(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    await sendTextMessage(
+        waId,
+        `Historial de *${conv.draftPlate}*. ¿A qué *email* te lo mandamos? ` +
+            `Un administrador del taller tiene que autorizar el envío.`
+    );
+}
+
+async function submitHistoryRequest(waId: string, conv: Conversation, email: string) {
+    if (!conv.draftCarId) {
+        await clearDrafts(waId);
+        await sendMenu(waId, { prefix: 'Se perdió el auto elegido, empecemos de nuevo.' });
+        return;
+    }
+    const result = await createPendingHistoryRequest({ waId, carId: conv.draftCarId, email });
     await clearDrafts(waId);
 
     if (!result.ok) {
-        await sendTextMessage(waId, `${result.message}\n\n${HELP_HINT}`);
+        await sendTextMessage(waId, result.message);
+        return;
+    }
+    await sendTextMessage(
+        waId,
+        `Listo, pedimos el historial de *${result.plate}* para *${email.trim().toLowerCase()}*. ` +
+            `Queda pendiente de autorización del taller; cuando lo aprueben te llega el PDF a ese correo y te avisamos por acá.`
+    );
+}
+
+async function handleAwaitHistoryEmailChoice(waId: string, conv: Conversation, input: StepInput) {
+    if (isValidEmail(input.text)) {
+        await submitHistoryRequest(waId, conv, input.text);
+        return;
+    }
+    const choice =
+        input.id ??
+        (isYes(input.text) ? 'email:use' : isNo(input.text) ? 'email:other' : null);
+    if (choice === 'email:use' && conv.draftExtra) {
+        await submitHistoryRequest(waId, conv, conv.draftExtra);
+        return;
+    }
+    if (choice === 'email:other') {
+        await setConv(waId, { step: 'AWAIT_HISTORY_EMAIL', draftExtra: null });
+        await askHistoryEmailText(waId);
+        return;
+    }
+    await stepMiss(waId, conv, 'Tocá una opción o escribime el email.');
+}
+
+async function handleAwaitHistoryEmail(waId: string, conv: Conversation, input: StepInput) {
+    if (!isValidEmail(input.text)) {
+        await stepMiss(waId, conv, 'Ese email no parece válido. Ejemplo: *juan@correo.com*');
+        return;
+    }
+    await submitHistoryRequest(waId, conv, input.text);
+}
+
+// ---------------------------------------------------------------------------
+// Cancelar turno
+// ---------------------------------------------------------------------------
+
+function appointmentOptions(appointments: ClientAppointment[]): ChoiceOption[] {
+    return appointments.slice(0, 10).map((ap) => ({
+        id: `cancel:${ap.id}`,
+        title: formatSlotButtonLabel(ap.startsAt),
+        description: `${ap.licensePlate ?? 'sin dominio'} · ${appointmentStatusWord(ap.status)}`,
+    }));
+}
+
+async function startCancel(waId: string, pickIndex?: number) {
+    await clearDrafts(waId);
+    const appointments = await findClientAppointments(waId);
+    if (appointments.length === 0) {
+        await sendNoDataChoice(
+            waId,
+            'No tenés turnos activos con este número. ¿Querés sacar uno o hablar con el taller?'
+        );
         return;
     }
 
-    await sendTextMessage(
-        waId,
-        `Listo. Pedimos el historial de *${result.plate}* para *${text.trim().toLowerCase()}*.\n\n` +
-            `Quedó *pendiente de autorización* de un administrador del taller.\n` +
-            `Cuando lo aprueben, te llega el PDF a ese correo y te avisamos por este chat.\n\n` +
-            `${HELP_HINT}`
-    );
-}
-
-/** Cancelar turno existente identificado por el teléfono del chat. */
-async function tryHandleCancel(waId: string, text: string): Promise<boolean> {
-    const lower = text.toLowerCase().trim();
-    if (!CANCEL_WORDS.has(lower) && !/^cancelar\s+\d+$/i.test(lower)) {
-        return false;
-    }
-
-    const appointments = await findClientAppointments(waId);
-    if (appointments.length === 0) {
-        await sendTextMessage(
-            waId,
-            `No encontré turnos activos asociados a este número.\n` +
-                `Si pediste turno, debe estar a nombre de este WhatsApp.\n\n${HELP_HINT}`
-        );
-        return true;
-    }
-
-    const pickMatch = lower.match(/^cancelar\s+(\d+)$/);
-    if (pickMatch) {
-        const idx = parseInt(pickMatch[1], 10) - 1;
-        if (idx < 0 || idx >= appointments.length) {
-            await sendTextMessage(
-                waId,
-                `Número inválido. Usá *cancelar 1*, *cancelar 2*, etc.\n\n` +
-                    `_También: *ayuda*_`
-            );
-            return true;
+    if (pickIndex !== undefined) {
+        const ap = appointments[pickIndex - 1];
+        if (ap) {
+            await askCancelConfirm(waId, ap);
+            return;
         }
-        const ap = appointments[idx];
-        await prisma.appointment.delete({ where: { id: ap.id } });
-        await clearDrafts(waId);
-        const { full } = formatDateTimeEsAr(ap.startsAt);
-        await sendTextMessage(
-            waId,
-            `Listo. Cancelamos el turno de *${full}*` +
-                (ap.licensePlate ? ` (dominio ${ap.licensePlate})` : '') +
-                `.\n\n${HELP_HINT}`
-        );
-        return true;
     }
 
     if (appointments.length === 1) {
-        const ap = appointments[0];
-        await prisma.appointment.delete({ where: { id: ap.id } });
-        await clearDrafts(waId);
-        const { full } = formatDateTimeEsAr(ap.startsAt);
-        await sendTextMessage(
-            waId,
-            `Listo. Cancelamos tu turno de *${full}*` +
-                (ap.licensePlate ? ` (dominio ${ap.licensePlate})` : '') +
-                `.\n\n${HELP_HINT}`
-        );
-        return true;
+        await askCancelConfirm(waId, appointments[0]);
+        return;
     }
 
-    const lines = appointments.map((ap, i) => {
-        const { full } = formatDateTimeEsAr(ap.startsAt);
-        const plate = ap.licensePlate ? ` · ${ap.licensePlate}` : '';
-        return `${i + 1}) ${full}${plate} (${ap.status.toLowerCase()})`;
-    });
-    await sendTextMessage(
-        waId,
-        `Tenés más de un turno. Respondé *cancelar N* con el número:\n\n` +
-            `${lines.join('\n')}\n\n` +
-            `_También: *reiniciar* · *ayuda*_`
-    );
-    return true;
+    await setConv(waId, { step: 'AWAIT_CANCEL_CHOICE' });
+    await askCancelChoice(waId);
 }
 
-/** Si hay propuesta pendiente, el cliente toca un botón o responde 1/2/3. */
-async function tryHandleProposalChoice(
-    waId: string,
-    text: string,
-    buttonId?: string
-): Promise<boolean> {
+async function askCancelChoice(waId: string) {
+    const appointments = await findClientAppointments(waId);
+    await sendChoice(waId, '¿Cuál turno querés cancelar?', appointmentOptions(appointments), {
+        listButtonLabel: 'Ver turnos',
+    });
+}
+
+async function askCancelConfirm(waId: string, ap: ClientAppointment) {
+    await setConv(waId, { step: 'AWAIT_CANCEL_CONFIRM', draftExtra: ap.id });
+    const { full } = formatDateTimeEsAr(ap.startsAt);
+    await sendChoice(
+        waId,
+        `¿Cancelamos tu turno del *${full}*${ap.licensePlate ? ` (${ap.licensePlate})` : ''}?`,
+        [
+            { id: 'cancelok:yes', title: 'Sí, cancelar' },
+            { id: 'cancelok:no', title: 'No, mantener' },
+        ]
+    );
+}
+
+async function handleAwaitCancelChoice(waId: string, conv: Conversation, input: StepInput) {
+    const appointments = await findClientAppointments(waId);
+    if (appointments.length === 0) {
+        await clearDrafts(waId);
+        await sendNoDataChoice(waId, 'No tenés turnos activos con este número.');
+        return;
+    }
+    const options = appointmentOptions(appointments);
+    const choice = input.id ?? pickByNumber(input.text, options);
+    const ap = choice ? appointments.find((a) => `cancel:${a.id}` === choice) : null;
+    if (!ap) {
+        await stepMiss(waId, conv, 'No encontré ese turno.');
+        return;
+    }
+    await askCancelConfirm(waId, ap);
+}
+
+async function handleAwaitCancelConfirm(waId: string, conv: Conversation, input: StepInput) {
+    const choice =
+        input.id ?? (isYes(input.text) ? 'cancelok:yes' : isNo(input.text) ? 'cancelok:no' : null);
+
+    if (choice === 'cancelok:no') {
+        await clearDrafts(waId);
+        await sendTextMessage(waId, 'Listo, tu turno sigue como estaba.');
+        return;
+    }
+    if (choice === 'cancelok:yes') {
+        // Solo se cancela un turno que realmente es de este teléfono.
+        const ap = (await findClientAppointments(waId)).find((a) => a.id === conv.draftExtra);
+        await clearDrafts(waId);
+        if (!ap) {
+            await sendTextMessage(waId, 'Ese turno ya no está activo.');
+            return;
+        }
+        await cancelAppointmentByClient(ap.id);
+        const { full } = formatDateTimeEsAr(ap.startsAt);
+        await sendTextMessage(waId, `Listo, cancelé tu turno del *${full}*. Avisamos al taller.`);
+        return;
+    }
+    await stepMiss(waId, conv, 'Tocá *Sí, cancelar* o *No, mantener*.');
+}
+
+// ---------------------------------------------------------------------------
+// Propuestas de horario del taller (botones turno_slot_N)
+// ---------------------------------------------------------------------------
+
+async function findPendingProposal(waId: string) {
     const variants = waIdLookupVariants(waId);
-    const pending = await prisma.appointment.findFirst({
+    return prisma.appointment.findFirst({
         where: {
             status: 'PROPUESTA_ENVIADA',
-            OR: [
-                { whatsappWaId: { in: variants } },
-                { clientPhone: { in: variants } },
-            ],
+            OR: [{ whatsappWaId: { in: variants } }, { clientPhone: { in: variants } }],
         },
         orderBy: { updatedAt: 'desc' },
     });
+}
+
+function proposalOptions(slots: string[]): ChoiceOption[] {
+    return slots.map((iso, i) => ({
+        id: `${SLOT_BUTTON_PREFIX}${i}`,
+        title: formatSlotButtonLabel(new Date(iso)),
+    }));
+}
+
+async function resendProposal(waId: string): Promise<boolean> {
+    const pending = await findPendingProposal(waId);
+    if (!pending) return false;
+    const slots = asProposedSlots(pending.proposedSlots);
+    if (!slots.length) return false;
+    await sendChoice(waId, 'Tenés horarios propuestos por el taller. Elegí el que te convenga:', proposalOptions(slots));
+    return true;
+}
+
+/** El cliente tocó un botón `turno_slot_N` (o respondió 1/2/3 con una propuesta pendiente). */
+async function handleProposalChoice(waId: string, text: string, buttonId?: string): Promise<boolean> {
+    const pending = await findPendingProposal(waId);
     if (!pending) return false;
 
     const slots = asProposedSlots(pending.proposedSlots);
     if (slots.length === 0) return false;
 
-    // El botón trae el índice exacto; el texto suelto solo se usa como respaldo.
-    const buttonMatch = buttonId?.startsWith(SLOT_BUTTON_PREFIX)
+    const fromButton = buttonId?.startsWith(SLOT_BUTTON_PREFIX)
         ? buttonId.slice(SLOT_BUTTON_PREFIX.length)
         : null;
-    const choice = buttonMatch ?? text.trim().match(/^[1-3]$/)?.[0];
+    const fromText = text.trim().match(/^[1-3]$/)?.[0];
+    if (fromButton === null && !fromText) return false;
 
-    if (choice === undefined || choice === null) {
-        // Si quiere reiniciar/cancelar, no bloquear el flujo de propuesta
-        const lower = text.toLowerCase().trim();
-        if (
-            RESTART_WORDS.has(lower) ||
-            CANCEL_WORDS.has(lower) ||
-            START_WORDS.has(lower) ||
-            HELP_WORDS.has(lower) ||
-            STATUS_WORDS.has(lower) ||
-            parseHistoryIntent(text).hit
-        ) {
-            return false;
-        }
-        await sendTextMessage(
-            waId,
-            `Para elegir un horario, tocá uno de los botones que te enviamos.\n` +
-                `Si no te aparecen, respondé con el número de la opción (1${slots.length > 1 ? ` a ${slots.length}` : ''}).\n\n` +
-                `_También: *cancelar* · *reiniciar* · *ayuda*_`
-        );
-        return true;
-    }
-
-    const index = buttonMatch !== null ? parseInt(choice, 10) : parseInt(choice, 10) - 1;
+    const index = fromButton !== null ? parseInt(fromButton, 10) : parseInt(fromText as string, 10) - 1;
     if (Number.isNaN(index) || index < 0 || index >= slots.length) {
-        await sendTextMessage(
-            waId,
-            `Esa opción no está disponible. Elegí entre 1 y ${slots.length}.\n\n` +
-                `_También: *cancelar* · *ayuda*_`
-        );
+        await sendTextMessage(waId, `Esa opción no está disponible. Elegí entre 1 y ${slots.length}.`);
         return true;
     }
 
     const startsAt = new Date(slots[index]);
     if (Number.isNaN(startsAt.getTime())) {
-        await sendTextMessage(
-            waId,
-            `Esa opción ya no es válida.\n\n${HELP_HINT}`
-        );
+        await sendTextMessage(waId, 'Esa opción ya no es válida. Escribí *taller* si necesitás ayuda.');
         return true;
     }
 
@@ -1046,11 +1590,11 @@ async function tryHandleProposalChoice(
             startsAt,
             status: 'CONFIRMADO',
             proposedSlots: Prisma.DbNull,
-            // Asegurar teléfono capturado para futuras cancelaciones
             whatsappWaId: pending.whatsappWaId || waId,
             clientPhone: pending.clientPhone || normalizeWaId(waId) || waId,
         },
     });
+    refreshCalendar();
 
     await notifyAppointmentConfirmed({
         toWaId: waId,
@@ -1062,394 +1606,294 @@ async function tryHandleProposalChoice(
     return true;
 }
 
-async function askForDate(waId: string, prefix?: string) {
-    const schedule = await getWorkshopSchedule();
+// ---------------------------------------------------------------------------
+// Despacho
+// ---------------------------------------------------------------------------
+
+type StepInput = { id?: string; text: string };
+
+/**
+ * Respuesta inválida dentro de un paso: avisa en una línea y repite la pregunta.
+ * A la segunda vez seguida ofrece salir o llamar al taller.
+ */
+async function stepMiss(waId: string, conv: Conversation, message: string) {
+    const misses = conv.unknownCount + 1;
+    const exitHint =
+        misses >= 2
+            ? ` Si querés salir, escribí *menu* o llamá al taller al *${getWorkshopContactPhone()}*.`
+            : '';
+    await sendTextMessage(waId, `${message}${exitHint}`);
+    await rePrompt(waId);
     await prisma.whatsAppConversation.update({
         where: { waId },
-        data: { step: 'AWAIT_DATE', draftStartsAt: null },
+        data: { unknownCount: misses },
     });
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `${prefix ? `${prefix}\n\n` : ''}¿Qué *día* querés traer el auto al taller?\n\n` +
-                `${describeSchedule(schedule)}\n${DATE_HINT}`,
-            'AWAIT_DATE'
-        )
-    );
 }
 
-async function askForTime(waId: string, day: Date) {
-    const schedule = await getWorkshopSchedule();
-    const dayLabel = day.toLocaleDateString('es-AR', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-    });
-    const hours = describeDayHours(day, schedule);
-
-    await prisma.whatsAppConversation.update({
-        where: { waId },
-        data: { step: 'AWAIT_TIME', draftStartsAt: day },
-    });
-    await sendTextMessage(
-        waId,
-        withStepHint(
-            `Anotado: *${dayLabel}*.\n\n¿A qué *hora* te queda cómodo llegar?\n` +
-                `${hours ? `Ese día atendemos *${hours}*.\n` : ''}\n${TIME_HINT}`,
-            'AWAIT_TIME'
-        )
-    );
+/** Repite la pregunta del paso actual. */
+async function rePrompt(waId: string) {
+    const conv = await getOrCreateConversation(waId);
+    switch (conv.step) {
+        case 'AWAIT_CAR_CHOICE':
+            return askCarChoice(waId);
+        case 'AWAIT_PLATE':
+            return askPlate(waId);
+        case 'AWAIT_PLATE_CONFIRM':
+            return askPlateConfirm(waId);
+        case 'AWAIT_NAME':
+            return askName(waId);
+        case 'AWAIT_ISSUE':
+            return askIssue(waId);
+        case 'AWAIT_DUP':
+            return askDup(waId);
+        case 'AWAIT_SLOT_DAY':
+            return askDay(waId);
+        case 'AWAIT_SLOT_TIME':
+            return conv.draftStartsAt ? askTime(waId, conv.draftStartsAt) : askDay(waId);
+        case 'AWAIT_CONFIRM':
+            return askConfirm(waId);
+        case 'AWAIT_STATUS_PLATE':
+            return askStatusCar(waId);
+        case 'AWAIT_HISTORY_PLATE':
+            return askHistoryCar(waId);
+        case 'AWAIT_HISTORY_EMAIL_CHOICE':
+            return askHistoryEmailChoice(waId);
+        case 'AWAIT_HISTORY_EMAIL':
+            return askHistoryEmailText(waId);
+        case 'AWAIT_CANCEL_CHOICE':
+            return askCancelChoice(waId);
+        case 'AWAIT_CANCEL_CONFIRM': {
+            const ap = (await findClientAppointments(waId)).find((a) => a.id === conv.draftExtra);
+            return ap ? askCancelConfirm(waId, ap) : startCancel(waId);
+        }
+        default:
+            return sendMenu(waId);
+    }
 }
 
-async function createPendingFromDraft(waId: string) {
-    const conv = await prisma.whatsAppConversation.findUnique({ where: { waId } });
-    if (!conv?.draftIssue || !conv.draftPlate || !conv.draftStartsAt || !conv.draftName) {
-        await clearDrafts(waId);
-        await sendTextMessage(
-            waId,
-            `Faltaban datos del pedido.\n\n${HELP_HINT}`
-        );
+/** Respuesta del cliente (texto o botón) al paso en curso. */
+async function handleStep(waId: string, conv: Conversation, input: StepInput) {
+    switch (conv.step) {
+        case 'AWAIT_CAR_CHOICE':
+            return handleAwaitCarChoice(waId, conv, input);
+        case 'AWAIT_PLATE':
+            return handleAwaitPlate(waId, conv, input);
+        case 'AWAIT_PLATE_CONFIRM':
+            return handleAwaitPlateConfirm(waId, conv, input);
+        case 'AWAIT_NAME':
+            return handleAwaitName(waId, conv, input);
+        case 'AWAIT_ISSUE':
+            return handleAwaitIssue(waId, conv, input);
+        case 'AWAIT_DUP':
+            return handleAwaitDup(waId, conv, input);
+        case 'AWAIT_SLOT_DAY':
+            return handleAwaitSlotDay(waId, conv, input);
+        case 'AWAIT_SLOT_TIME':
+            return handleAwaitSlotTime(waId, conv, input);
+        case 'AWAIT_CONFIRM':
+            return handleAwaitConfirm(waId, conv, input);
+        case 'AWAIT_STATUS_PLATE':
+            return handleAwaitStatusCar(waId, conv, input);
+        case 'AWAIT_HISTORY_PLATE':
+            return handleAwaitHistoryCar(waId, conv, input);
+        case 'AWAIT_HISTORY_EMAIL_CHOICE':
+            return handleAwaitHistoryEmailChoice(waId, conv, input);
+        case 'AWAIT_HISTORY_EMAIL':
+            return handleAwaitHistoryEmail(waId, conv, input);
+        case 'AWAIT_CANCEL_CHOICE':
+            return handleAwaitCancelChoice(waId, conv, input);
+        case 'AWAIT_CANCEL_CONFIRM':
+            return handleAwaitCancelConfirm(waId, conv, input);
+        default:
+            // Paso desconocido: se descarta y se vuelve al menú.
+            await clearDrafts(waId);
+            return sendMenu(waId);
+    }
+}
+
+async function runIntent(waId: string, detected: DetectedIntent) {
+    switch (detected.intent) {
+        case 'menu':
+            await clearDrafts(waId);
+            return sendMenu(waId, { prefix: 'Listo, empecemos de nuevo.' });
+        case 'help':
+            await clearDrafts(waId);
+            return sendMenu(waId);
+        case 'greeting':
+            await clearDrafts(waId);
+            return sendMenu(waId, { withName: true });
+        case 'turno':
+            return startTurno(waId);
+        case 'status':
+            return startStatus(waId, detected.plate);
+        case 'history':
+            return startHistory(waId, detected.plate);
+        case 'cancel':
+            return startCancel(waId, detected.cancelIndex);
+        case 'contact':
+            await clearDrafts(waId);
+            return sendContact(waId);
+        default:
+            return sendMenu(waId);
+    }
+}
+
+/** Botones del menú principal y de "Más opciones". */
+async function handleMenuAction(waId: string, value: string) {
+    switch (value) {
+        case 'turno':
+            return startTurno(waId);
+        case 'estado':
+            return startStatus(waId);
+        case 'historial':
+            return startHistory(waId);
+        case 'cancelar':
+            return startCancel(waId);
+        case 'mas':
+            await clearDrafts(waId);
+            return sendMoreOptions(waId);
+        case 'taller':
+            await clearDrafts(waId);
+            return sendContact(waId);
+        default:
+            return sendMenu(waId);
+    }
+}
+
+async function handleAction(waId: string, conv: Conversation, buttonId: string, title: string) {
+    const [kind, ...rest] = buttonId.split(':');
+    if (kind === 'menu') {
+        await handleMenuAction(waId, rest.join(':'));
         return;
     }
 
-    const botId = await getOrCreateBotUserId();
-    const phone = normalizeWaId(waId) || waId;
+    const accepted = STEP_BUTTON_KIND[conv.step];
+    if (!accepted || !accepted.split('|').includes(kind)) {
+        await sendStaleOption(waId);
+        return;
+    }
+    await handleStep(waId, conv, { id: buttonId, text: title });
+}
 
-    await prisma.appointment.create({
-        data: {
-            startsAt: conv.draftStartsAt,
-            clientName: conv.draftName,
-            clientPhone: phone,
-            notes: conv.draftIssue,
-            licensePlate: conv.draftPlate,
-            carId: conv.draftCarId || null,
-            status: 'PENDIENTE',
-            source: 'WHATSAPP',
-            whatsappWaId: waId,
-            createdById: botId,
-        },
-    });
+async function handleText(waId: string, conv: Conversation, text: string) {
+    // 1/2/3 sin nada en curso: respuesta a una propuesta de horarios del taller.
+    if (conv.step === 'IDLE' && /^[1-3]$/.test(text)) {
+        if (await handleProposalChoice(waId, text)) return;
+    }
 
-    await clearDrafts(waId);
+    const detected = detectIntent(text);
+    const keyword = normalizeBotKeyword(text);
 
-    const { full } = formatDateTimeEsAr(conv.draftStartsAt);
-    await sendTextMessage(
-        waId,
-        `¡Listo ${conv.draftName}! Registramos tu *pedido de turno*:\n` +
-            `• Teléfono: *${phone}*\n` +
-            `• Dominio: *${conv.draftPlate}*\n` +
-            `• Avería: ${conv.draftIssue}\n` +
-            `• Llegada: *${full}*\n\n` +
-            `Quedó *pendiente de confirmación* del taller. Te avisamos por este chat cuando se confirme.\n\n` +
-            `${HELP_HINT}`
-    );
+    // Reiniciar / menú: siempre, en cualquier paso.
+    if (detected.intent === 'menu') {
+        await runIntent(waId, detected);
+        return;
+    }
+
+    if (conv.step !== 'IDLE') {
+        // "cancelar" en medio de un pedido = abandonar el pedido (no cancelar un turno).
+        if (!conv.step.startsWith('AWAIT_CANCEL') && CANCEL_WORDS.has(keyword)) {
+            await clearDrafts(waId);
+            await sendMenu(waId, { prefix: 'Listo, dejé el pedido sin guardar.' });
+            return;
+        }
+
+        if (detected.intent === 'help') {
+            await sendTextMessage(waId, 'Seguimos con tu pedido. Si querés salir, escribí *menu*.');
+            await rePrompt(waId);
+            return;
+        }
+
+        // En pasos de texto libre las palabras clave no interrumpen (una avería puede decir "historial").
+        if (!FREE_TEXT_STEPS.has(conv.step) && detected.intent) {
+            await runIntent(waId, detected);
+            return;
+        }
+
+        await handleStep(waId, conv, { text });
+        return;
+    }
+
+    // IDLE
+    if (detected.intent) {
+        await runIntent(waId, detected);
+        return;
+    }
+
+    // No se entendió: si hay horarios propuestos pendientes se los recuerda, si no, menú.
+    if (await resendProposal(waId)) return;
+
+    const misses = conv.unknownCount + 1;
+    await sendMenu(waId, { prefix: 'No te entendí.' });
+    if (misses >= 2) {
+        await sendContact(waId, 'Si preferís, hablá directamente con el taller.');
+    }
+    await prisma.whatsAppConversation.update({ where: { waId }, data: { unknownCount: misses } });
 }
 
 /**
- * FSM: IDLE → AWAIT_ISSUE → AWAIT_PLATE → [AWAIT_PLATE_CONFIRM] → [AWAIT_NAME] → AWAIT_DATE → AWAIT_TIME → crea PENDIENTE
- * Consulta: *estado* → (AWAIT_STATUS_PLATE si hay varios autos) → reporte OT abierta
+ * FSM del bot. Pasos:
+ *   Turno:    AWAIT_CAR_CHOICE | AWAIT_PLATE → [AWAIT_PLATE_CONFIRM] → [AWAIT_DUP] → [AWAIT_NAME]
+ *             → AWAIT_ISSUE → AWAIT_SLOT_DAY → AWAIT_SLOT_TIME → AWAIT_CONFIRM → crea PENDIENTE
+ *   Estado:   [AWAIT_STATUS_PLATE]
+ *   Historial:[AWAIT_HISTORY_PLATE] → AWAIT_HISTORY_EMAIL_CHOICE | AWAIT_HISTORY_EMAIL
+ *   Cancelar: [AWAIT_CANCEL_CHOICE] → AWAIT_CANCEL_CONFIRM → CANCELADO
  *
- * Reglas anti-datos colgados:
- * - Appointment solo se crea al final (drafts descartables).
- * - Timeout 30' limpia solo drafts.
- * - reiniciar limpia drafts sin tocar turnos ya creados.
- * - cancelar elimina turnos activos de ese WhatsApp.
- * - estado identifica por este WhatsApp; si hay varios autos, pide dominio.
+ * Reglas:
+ * - El Appointment solo se crea al confirmar; los drafts son descartables.
+ * - El timeout de 30 min se evalúa al próximo mensaje del cliente y se le avisa.
+ * - Cancelar NO borra: deja el turno en CANCELADO.
+ * - El bot nunca modifica datos maestros (dominio del auto, email del cliente).
  */
 export async function handleIncomingWhatsAppMessage(msg: IncomingMessage): Promise<void> {
     const waId = normalizeWaId(msg.from) || msg.from;
-    const text = (msg.text || msg.buttonId || '').trim();
-    if (!text) return;
 
-    // Limpieza oportunista de conversaciones abandonadas (sin cron)
-    await expireStaleConversations();
-
-    const lower = text.toLowerCase().trim();
-
-    // *ayuda* con contexto del paso actual (si hay conversación a medias)
-    if (HELP_WORDS.has(lower)) {
-        const convForHelp = await getOrCreateConversation(waId);
-        await sendTextMessage(waId, helpForStep(convForHelp.step));
+    if (msg.unsupported) {
+        await sendMenu(waId, {
+            prefix: 'Por acá solo puedo leer mensajes de texto.',
+        });
         return;
     }
 
-    if (await tryHandleCancel(waId, text)) {
-        return;
-    }
+    const text = (msg.text || '').trim();
+    const buttonId = msg.buttonId?.trim();
+    if (!text && !buttonId) return;
 
-    if (await tryHandleStatus(waId, text)) {
-        return;
-    }
-
-    if (await tryHandleHistory(waId, text)) {
-        return;
-    }
-
-    if (await tryHandleProposalChoice(waId, text, msg.buttonId)) {
+    // Botón/plantilla de propuesta del taller (turno_slot_N)
+    if (buttonId?.startsWith(SLOT_BUTTON_PREFIX)) {
+        if (await handleProposalChoice(waId, text, buttonId)) return;
+        await sendStaleOption(waId);
         return;
     }
 
     let conv = await getOrCreateConversation(waId);
 
-    if (await expireConversationIfStale(waId, conv.updatedAt, conv.step)) {
-        // Si además pidió empezar, continuar abajo con flow fresco
-        if (!parseTurnoIntent(text)) return;
+    // Timeout por inactividad: se descarta el borrador y se avisa al cliente.
+    if (conv.step !== 'IDLE' && Date.now() - conv.updatedAt.getTime() > CONVERSATION_IDLE_MS) {
+        await clearDrafts(waId);
         conv = await getOrCreateConversation(waId);
-    }
 
-    // Reinicio explícito: descarta drafts, NO borra turnos ya creados
-    if (RESTART_WORDS.has(lower)) {
-        await clearDrafts(waId);
-        await sendTextMessage(
-            waId,
-            `Listo, reiniciamos. No se guardó ningún pedido a medias.\n\n` +
-                `${HELP_HINT}`
-        );
-        return;
-    }
-
-    if (conv.step === 'AWAIT_STATUS_PLATE') {
-        await handleAwaitStatusPlate(waId, text);
-        return;
-    }
-
-    if (conv.step === 'AWAIT_HISTORY_PLATE') {
-        await handleAwaitHistoryPlate(waId, text);
-        return;
-    }
-
-    if (conv.step === 'AWAIT_HISTORY_EMAIL') {
-        await handleAwaitHistoryEmail(waId, text);
-        return;
-    }
-
-    if (conv.step === 'AWAIT_PLATE_CONFIRM') {
-        await handleAwaitPlateConfirm(waId, text);
-        return;
-    }
-
-    // *turno* / saludo / frases naturales arrancan el pedido. En IDLE, si no se entiende → menú.
-    if (parseTurnoIntent(text)) {
-        await clearDrafts(waId);
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: { step: 'AWAIT_ISSUE' },
-        });
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Hola, soy el asistente de *Nóbile*.\n` +
-                    `Tu número queda registrado con este chat para avisos y cancelaciones.\n\n` +
-                    `${HELP_HINT}\n\n` +
-                    `¿Qué *avería* o trabajo necesita el auto?`,
-                'AWAIT_ISSUE'
-            )
-        );
-        return;
-    }
-
-    if (conv.step === 'IDLE') {
-        await sendTextMessage(
-            waId,
-            `No te entendí del todo.\n\n${HELP_HINT}`
-        );
-        return;
-    }
-
-    if (conv.step === 'AWAIT_ISSUE') {
-        const issue = text.slice(0, 500);
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: { draftIssue: issue, step: 'AWAIT_PLATE' },
-        });
-        await sendTextMessage(
-            waId,
-            withStepHint(
-                `Gracias. Ahora enviá el *dominio* del auto *sin guiones*.\n` +
-                    `Formatos válidos:\n` +
-                    `• Viejo: *ABC123*\n` +
-                    `• Mercosur: *AA123BB*`,
-                'AWAIT_PLATE'
-            )
-        );
-        return;
-    }
-
-    if (conv.step === 'AWAIT_PLATE') {
-        const plateValidation = validateNewLicensePlate(text);
-        if (!plateValidation.ok || !plateValidation.plate) {
-            await sendTextMessage(
+        const startsFresh = buttonId
+            ? buttonId.startsWith('menu:')
+            : detectIntent(text).intent !== null;
+        if (!startsFresh) {
+            await sendChoice(
                 waId,
-                withStepHint(
-                    `No entendí el dominio.\n` +
-                        `${plateValidation.message || 'Dominio inválido.'}\n` +
-                        `Ejemplos: *ABC123* o *AA123BB* (sin guiones).`,
-                    'AWAIT_PLATE'
-                )
+                'El pedido se cerró por inactividad y no se guardó nada. ¿Empezamos de nuevo?',
+                [
+                    { id: 'menu:turno', title: 'Sacar turno' },
+                    { id: 'menu:inicio', title: 'Ver menú' },
+                ],
+                { fallbackText: 'El pedido se cerró por inactividad y no se guardó nada. Escribí *turno* o *menu* para empezar de nuevo.' }
             );
             return;
         }
+    }
 
-        const plate = plateValidation.plate;
-        const carId = await findCarIdByNormalizedPlateExact(plate);
-        if (carId) {
-            const ownerName = await getCurrentOwnerName(carId);
-            await proceedAfterPlateResolved(waId, plate, carId, ownerName);
-            return;
-        }
-
-        const fuzzyMatches = await findFuzzyPlateMatches(plate);
-        if (fuzzyMatches.length > 0) {
-            await askPlateConfirm(waId, plate, fuzzyMatches);
-            return;
-        }
-
-        await proceedAfterPlateResolved(waId, plate, null, null);
+    if (buttonId) {
+        await handleAction(waId, conv, buttonId, text);
         return;
     }
 
-    if (conv.step === 'AWAIT_NAME') {
-        const name = text.slice(0, 120);
-        // Si escribió una keyword por error, no tomarla como nombre
-        if (
-            parseTurnoIntent(text) ||
-            STATUS_WORDS.has(lower) ||
-            parseHistoryIntent(text).hit ||
-            CANCEL_WORDS.has(lower) ||
-            RESTART_WORDS.has(lower)
-        ) {
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `Necesito tu *nombre y apellido* para el turno (no una palabra clave).`,
-                    'AWAIT_NAME'
-                )
-            );
-            return;
-        }
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: { draftName: name },
-        });
-        await askForDate(waId, `Gracias, ${name.split(' ')[0]}.`);
-        return;
-    }
-
-    if (conv.step === 'AWAIT_DATE') {
-        const now = new Date();
-        const day = parseClientDate(text, now);
-
-        if (!day) {
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `No pude entender esa fecha.\n\n${DATE_HINT}`,
-                    'AWAIT_DATE'
-                )
-            );
-            return;
-        }
-
-        if (day.getTime() < startOfDay(now).getTime()) {
-            const todayLabel = now.toLocaleDateString('es-AR', {
-                weekday: 'long',
-                day: 'numeric',
-                month: 'long',
-                year: 'numeric',
-            });
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `Ese día ya pasó. Hoy es *${todayLabel}*.\n\n` +
-                        `Decime un día de hoy en adelante. ${DATE_HINT}`,
-                    'AWAIT_DATE'
-                )
-            );
-            return;
-        }
-
-        const schedule = await getWorkshopSchedule();
-        if (!isWorkingDay(day, schedule)) {
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `Los *${pluralWeekday(day)}* el taller no atiende.\n\n` +
-                        `${describeSchedule(schedule)}\nDecime otro día. ${DATE_HINT}`,
-                    'AWAIT_DATE'
-                )
-            );
-            return;
-        }
-
-        await askForTime(waId, day);
-        return;
-    }
-
-    if (conv.step === 'AWAIT_TIME') {
-        if (CHANGE_DATE_WORDS.has(lower)) {
-            await askForDate(waId, 'Sin problema, cambiemos el día.');
-            return;
-        }
-
-        if (!conv.draftStartsAt) {
-            await askForDate(waId, 'Se perdió el día elegido, lo volvemos a pedir.');
-            return;
-        }
-
-        const parsed = parseClientTime(text);
-        if (!parsed.ok) {
-            const message =
-                parsed.reason === 'AMBIGUOUS'
-                    ? `¿Esa hora es de la mañana o de la tarde?\n\n` +
-                      `Escribila en formato de 24 horas (*16* para las 4 de la tarde) ` +
-                      `o aclarame, por ejemplo *4 de la tarde*.`
-                    : `No pude entender esa hora.\n\n${TIME_HINT}`;
-            await sendTextMessage(waId, withStepHint(message, 'AWAIT_TIME'));
-            return;
-        }
-
-        const now = new Date();
-        const startsAt = combineDateAndTime(conv.draftStartsAt, parsed.hour, parsed.minute);
-
-        const schedule = await getWorkshopSchedule();
-        const slotCheck = checkSlotWithinSchedule(startsAt, schedule);
-        if (!slotCheck.ok) {
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `${slotCheck.message}\n\n` +
-                        `Decime otra hora, o escribí *cambiar fecha* para elegir otro día.`,
-                    'AWAIT_TIME'
-                )
-            );
-            return;
-        }
-
-        if (startsAt.getTime() <= now.getTime()) {
-            const nowLabel = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-            await sendTextMessage(
-                waId,
-                withStepHint(
-                    `Esa hora ya pasó: ahora son las *${nowLabel}*.\n\n` +
-                        `Decime una hora más adelante, o escribí *cambiar fecha* para elegir otro día.`,
-                    'AWAIT_TIME'
-                )
-            );
-            return;
-        }
-
-        await prisma.whatsAppConversation.update({
-            where: { waId },
-            data: { draftStartsAt: startsAt },
-        });
-        await createPendingFromDraft(waId);
-        return;
-    }
-
-    // Estado desconocido: sanitizar
-    await clearDrafts(waId);
-    await sendTextMessage(
-        waId,
-        `No te entendí.\n\n${HELP_HINT}`
-    );
+    await handleText(waId, conv, text);
 }
